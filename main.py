@@ -3,7 +3,6 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QPlainTextEdit
 
 #Application call
 app = QApplication(sys.argv)
-
 window = QMainWindow()
 #Setting window title
 window.setWindowTitle("Sharkpad")
