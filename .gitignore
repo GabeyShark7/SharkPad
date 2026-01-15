@@ -1,5 +1,5 @@
 # Virtual environment
-venv/
+sharkpad_env/
 
 # Python cache files
 __pycache__/
