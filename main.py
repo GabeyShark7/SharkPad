@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QFont, QFontDatabase, QAction, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 
 import file_operations
 import view_operations
@@ -102,6 +103,7 @@ def init_main():
     window = QMainWindow()
     window.setWindowTitle("SharkPad")
     window.resize(900, 600)
+    window.setWindowIcon(QIcon("shark_pad_icon.png"))
 
     # Central widget + layout
     central_widget = QWidget()
@@ -115,7 +117,7 @@ def init_main():
     main_layout.addWidget(editor)
 
     drawing_pad = drawing_operations.create_drawing_pad()
-    drawing_pad.setVisible(False)
+    drawing_pad.setVisible(True)
     main_layout.addWidget(drawing_pad)
 
     window.setCentralWidget(central_widget)
@@ -129,7 +131,7 @@ def init_main():
     file_menu = menu_bar.addMenu("File")
     new_action = QAction("New", window)
     open_action = QAction("Open", window)
-    save_action = QAction("Save", window)
+    save_action = QAction("Save (CTRL+S)", window)
     save_as_action = QAction("Save As...", window)
     exit_action = QAction("Exit", window)
     exit_action.triggered.connect(app.quit)
@@ -146,7 +148,7 @@ def init_main():
     font_size_indicator.setDisabled(True)
     
     drawing_pad_action = QAction("Show Drawing Pad", window, checkable=True)
-    drawing_pad_action.setChecked(False)
+    drawing_pad_action.setChecked(True)
     
     view_menu.addAction(wrap_action)
     view_menu.addAction(set_font_action)
