@@ -9,6 +9,8 @@ Drawing Tools: Sketch diagrams, illustrations, or annotations directly within yo
 
 Multi-purpose: Perfect for school work, teaching materials, brainstorming, or general productivity.
 
+AI: Capture voice and sounds simultaneously and summarize your text with a click of a button.
+
 Open Source: Fully open-source and customizable, making it easy to adapt to your workflow.
 
 SharkPad aims to be a lightweight, user-friendly tool for organizing your ideas, tasks, and creative work—one app for everything you need to do.
