@@ -1,174 +1,192 @@
 from PySide6.QtGui import QTextCharFormat, QTextCursor, QColor, QAction
 from PySide6.QtWidgets import QMenu
-from PySide6.QtCore import Qt, QTimer
-import language_tool_python
+from PySide6.QtCore import Qt, QTimer, QThread, Signal
+from spellchecker import SpellChecker
 import re
 
-# ---------------------------
-# Initialize LanguageTool
-# ---------------------------
-tool = language_tool_python.LanguageTool('en-US')
-
-# Preload to avoid first-time freeze
-QTimer.singleShot(0, lambda: tool.check(" "))
-
-# ---------------------------
-# Ignored words
-# ---------------------------
+# --- Engine Setup ---
+spell = SpellChecker(distance=2)  # Increased for better recognition
 ignored_words = set()
 
-# ---------------------------
-# Highlight function
-# ---------------------------
-def highlight_misspelled_words(editor):
-    doc = editor.document()
-    cursor = QTextCursor(doc)
-    cursor.select(QTextCursor.Document)
-    cursor.setCharFormat(QTextCharFormat())
+# Add common contractions and patterns that shouldn't be flagged
+spell.word_frequency.load_words(['dont', 'wont', 'cant', 'shouldnt', 'wouldnt', 'couldnt', 
+                                  'isnt', 'arent', 'wasnt', 'werent', 'hasnt', 'havent',
+                                  'hadnt', 'doesnt', 'didnt', 'thats', 'whats', 'heres',
+                                  'theres', 'youre', 'theyre', 'were', 'ive', 'youve',
+                                  'weve', 'theyve', 'id', 'youd', 'hed', 'shed', 'itll',
+                                  'thatll', 'ill', 'youll', 'shell', 'theyll'])
 
-    text = editor.toPlainText()
-    if not text.strip():
-        return
+class SpellCheckWorker(QThread):
+    results_ready = Signal(list, str)  # errors + text hash for validation
 
-    word_regex = re.compile(r"\b\w+\b")
+    def __init__(self, text):
+        super().__init__()
+        self.text = text
 
-    try:
-        matches = tool.check(text)
-    except Exception:
-        matches = []
-
-    error_positions = []
-    for m in matches:
-        start, end = m.offset, m.offset + m.error_length
-        error_positions.append((start, end, tuple(m.replacements)))
-
-    block = doc.firstBlock()
-    while block.isValid():
-        block_text = block.text()
-        block_pos = block.position()
-
-        for match in word_regex.finditer(block_text):
-            start = block_pos + match.start()
-            end = block_pos + match.end()
-            word = match.group()
-
-            if word in ignored_words:
-                continue
-
-            for err_start, err_end, replacements in error_positions:
-                if start < err_end and end > err_start:
-                    fmt = QTextCharFormat()
-                    fmt.setBackground(QColor(255, 0, 0))       # RED highlight
-                    fmt.setForeground(QColor(255, 255, 255))   # White text
-                    word_cursor = QTextCursor(doc)
-                    word_cursor.setPosition(start)
-                    word_cursor.setPosition(end, QTextCursor.KeepAnchor)
-                    word_cursor.setCharFormat(fmt)
-                    break
-
-        block = block.next()
-
-# ---------------------------
-# Right-click context menu
-# ---------------------------
-def show_spellcheck_menu(editor, position):
-    cursor = editor.cursorForPosition(position)
-    cursor.select(QTextCursor.WordUnderCursor)
-    word = cursor.selectedText()
-    word_start = cursor.selectionStart()
-    word_end = cursor.selectionEnd()
-
-    print(f"DEBUG: Right-clicked word: '{word}' at positions {word_start}-{word_end}")
-
-    if not word or word in ignored_words:
-        print(f"DEBUG: Word is empty or ignored")
-        return
-
-    text = editor.toPlainText()
-    try:
-        matches = tool.check(text)
-    except Exception:
-        matches = []
-
-    print(f"DEBUG: Total matches found: {len(matches)}")
-
-    # Find matches that overlap with the clicked word position
-    suggestions = []
-    for m in matches:
-        match_start = m.offset
-        match_end = m.offset + m.error_length
+    def run(self):
+        # Only match actual alphabetic words (no numbers or mixed)
+        word_regex = re.compile(r"\b[a-zA-Z]+\b")
+        matches = list(word_regex.finditer(self.text))
         
-        # Check if the match overlaps with our word position
-        if match_start <= word_start < match_end or word_start <= match_start < word_end:
-            print(f"DEBUG: Found matching error at {match_start}-{match_end}")
-            print(f"DEBUG: Replacements: {m.replacements}")
-            suggestions.extend(m.replacements)
-            break
+        # Build set of (lowercase_word, original_case_word) pairs
+        word_map = {}
+        for m in matches:
+            original = m.group()
+            lower = original.lower()
+            if lower not in ignored_words:
+                if lower not in word_map:
+                    word_map[lower] = []
+                word_map[lower].append((m.start(), m.end(), original))
+        
+        # Check lowercase versions
+        misspelled = spell.unknown(word_map.keys())
+        
+        # Map back to original positions
+        errors = []
+        for lower_word in misspelled:
+            for start, end, original in word_map[lower_word]:
+                errors.append((start, end, original))
+        
+        # Send text hash to verify it hasn't changed
+        self.results_ready.emit(errors, str(hash(self.text)))
 
-    suggestions = list(dict.fromkeys(suggestions))  # remove duplicates
-    print(f"DEBUG: Suggestions after dedup: {suggestions}")
-    suggestions = suggestions[:5]  # top 5
-    print(f"DEBUG: Final suggestions (top 5): {suggestions}")
+_worker_ref = None
+_last_text_hash = None
 
-    menu = QMenu(editor)
-    print(f"DEBUG: Creating menu with {len(suggestions)} suggestions")
+def highlight_misspelled_words(editor):
+    global _worker_ref, _last_text_hash
     
-    if suggestions:
-        for i, suggestion in enumerate(suggestions):
-            print(f"DEBUG: Adding action {i}: '{suggestion}'")
-            action = QAction(suggestion, menu)
-            action.triggered.connect(lambda checked=False, s=suggestion, start=word_start, end=word_end: 
-                                    replace_word(editor, start, end, s))
-            menu.addAction(action)
-    else:
-        action = QAction("No suggestions", menu)
-        action.setDisabled(True)
-        menu.addAction(action)
+    current_text = editor.toPlainText()
+    current_hash = str(hash(current_text))
+    
+    # If a worker is already running, stop it
+    if _worker_ref and _worker_ref.isRunning():
+        _worker_ref.terminate()
+        _worker_ref.wait()
 
-    menu.addSeparator()
-    ignore_action = QAction("Ignore", menu)
-    ignore_action.triggered.connect(lambda: ignore_word(editor, word))
-    menu.addAction(ignore_action)
+    _last_text_hash = current_hash
+    _worker_ref = SpellCheckWorker(current_text)
+    _worker_ref.results_ready.connect(lambda errs, h: apply_highlights(editor, errs, h))
+    _worker_ref.start(QThread.LowPriority)
 
-    print(f"DEBUG: About to show menu with {len(menu.actions())} actions")
-    menu.exec(editor.mapToGlobal(position))
-    print(f"DEBUG: Menu closed")
-
-
-# ---------------------------
-# Replace word
-# ---------------------------
-def replace_word(editor, start, end, new_word):
-    print(f"DEBUG: replace_word called with '{new_word}' at {start}-{end}")
+def apply_highlights(editor, errors, text_hash):
+    global _last_text_hash
+    
+    # Only apply if text hasn't changed since we started checking
+    if text_hash != _last_text_hash or not editor:
+        return
+    
+    doc = editor.document()
+    
+    # Save user cursor and selection
     cursor = editor.textCursor()
-    cursor.setPosition(start)
-    cursor.setPosition(end, QTextCursor.KeepAnchor)
-    cursor.insertText(new_word)
-    highlight_misspelled_words(editor)
+    old_pos = cursor.position()
+    old_anchor = cursor.anchor()
+    has_selection = cursor.hasSelection()
+    
+    # Create a separate cursor for formatting
+    format_cursor = QTextCursor(doc)
+    
+    # 1. Reset all formatting
+    format_cursor.select(QTextCursor.Document)
+    default_fmt = QTextCharFormat()
+    format_cursor.setCharFormat(default_fmt)
 
-# ---------------------------
-# Ignore word
-# ---------------------------
-def ignore_word(editor, word):
-    print(f"DEBUG: Ignoring word '{word}'")
-    ignored_words.add(word)
-    highlight_misspelled_words(editor)
+    # 2. Apply red underline (less intrusive than background)
+    error_fmt = QTextCharFormat()
+    error_fmt.setUnderlineStyle(QTextCharFormat.WaveUnderline)
+    error_fmt.setUnderlineColor(QColor(255, 0, 0))
 
-# ---------------------------
-# Enable spellcheck
-# ---------------------------
+    # 3. Apply to all misspellings
+    for start, end, word in errors:
+        format_cursor.setPosition(start)
+        format_cursor.setPosition(end, QTextCursor.KeepAnchor)
+        format_cursor.setCharFormat(error_fmt)
+    
+    # 4. Restore original cursor position and selection
+    if has_selection:
+        cursor.setPosition(old_anchor)
+        cursor.setPosition(old_pos, QTextCursor.KeepAnchor)
+    else:
+        cursor.setPosition(old_pos)
+    editor.setTextCursor(cursor)
+
 def enable_spellcheck(editor):
     editor.setContextMenuPolicy(Qt.CustomContextMenu)
     editor.customContextMenuRequested.connect(lambda pos: show_spellcheck_menu(editor, pos))
-
+    
     timer = QTimer()
     timer.setSingleShot(True)
-    timer.setInterval(300)
-
-    def schedule_highlight():
-        timer.start()
-
+    timer.setInterval(700) 
     timer.timeout.connect(lambda: highlight_misspelled_words(editor))
-    editor.textChanged.connect(schedule_highlight)
+    
+    editor._spellcheck_timer = timer
+    editor.textChanged.connect(timer.start)
+    
+    QTimer.singleShot(500, lambda: highlight_misspelled_words(editor))
 
+def show_spellcheck_menu(editor, pos):
+    cursor = editor.cursorForPosition(pos)
+    cursor.select(QTextCursor.WordUnderCursor)
+    word = cursor.selectedText()
+    
+    # Filter out non-alphabetic or ignored words
+    if not word or not word.isalpha() or word.lower() in ignored_words:
+        editor.createStandardContextMenu().exec(editor.mapToGlobal(pos))
+        return
+
+    # Check lowercase version
+    lower_word = word.lower()
+    if lower_word not in spell.unknown([lower_word]):
+        editor.createStandardContextMenu().exec(editor.mapToGlobal(pos))
+        return
+    
+    # Get suggestions with better matching
+    suggs = list(spell.candidates(lower_word) or [])[:7]  # More suggestions
+    
+    # If first letter was capitalized, capitalize suggestions
+    if word and word[0].isupper():
+        suggs = [s.capitalize() for s in suggs]
+    
+    menu = QMenu(editor)
+    
+    # Add suggestions if available
+    if suggs:
+        for s in suggs:
+            a = QAction(s, menu)
+            a.triggered.connect(lambda _, n=s, p=pos: replace_word(editor, n, p))
+            menu.addAction(a)
+        menu.addSeparator()
+    else:
+        # If no suggestions, show a disabled item
+        no_sugg = QAction("(No suggestions)", menu)
+        no_sugg.setEnabled(False)
+        menu.addAction(no_sugg)
+        menu.addSeparator()
+    
+    # Always show "Ignore" option
+    ignore_action = QAction(f"Ignore '{word}'", menu)
+    ignore_action.triggered.connect(lambda: ignore_word(editor, word))
+    menu.addAction(ignore_action)
+    
+    # Add "Add to Dictionary" option
+    add_dict_action = QAction(f"Add '{word}' to Dictionary", menu)
+    add_dict_action.triggered.connect(lambda: add_to_dictionary(editor, word))
+    menu.addAction(add_dict_action)
+    
+    menu.exec(editor.mapToGlobal(pos))
+
+def replace_word(editor, new_word, pos):
+    cursor = editor.cursorForPosition(pos)
+    cursor.select(QTextCursor.WordUnderCursor)
+    cursor.insertText(new_word)
+    QTimer.singleShot(100, lambda: highlight_misspelled_words(editor))
+
+def ignore_word(editor, word):
+    ignored_words.add(word.lower())  # Store as lowercase
+    highlight_misspelled_words(editor)
+
+def add_to_dictionary(editor, word):
+    """Permanently add word to spellchecker dictionary"""
+    spell.word_frequency.load_words([word.lower()])
     highlight_misspelled_words(editor)
