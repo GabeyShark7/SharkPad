@@ -39,7 +39,7 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 **Listen**
 - Voice dictation that types into your notes as you talk
 - Runs locally on your computer with Whisper, so it works offline
-- Adjustable microphone sensitivity for quiet or noisy rooms
+- Pick your microphone and a room preset (Quiet, Normal, Noisy), or fine-tune with a sensitivity slider and live mic meter in **AI Tools > Voice Dictation Settings**
 
 **Understand**
 - **AI Teacher** explains your notes in plain language with one click

@@ -2,9 +2,11 @@ import sys
 import os
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPlainTextEdit, QMenu, QWidget, QHBoxLayout, QVBoxLayout,
-    QFileDialog, QMessageBox, QProgressBar, QLabel, QSlider, QDialog, QPushButton, QLineEdit
+    QFileDialog, QMessageBox, QLabel, QSlider, QDialog, QPushButton, QLineEdit, QComboBox
 )
-from PySide6.QtGui import QFont, QFontDatabase, QAction, QKeySequence, QShortcut, QIcon
+from PySide6.QtGui import (
+    QFont, QFontDatabase, QAction, QKeySequence, QShortcut, QIcon, QPainter, QPen, QColor, QPalette
+)
 from PySide6.QtCore import Qt, QTimer, QSettings
 
 import file_operations
@@ -95,54 +97,194 @@ class OpenAISettingsDialog(QDialog):
         QMessageBox.information(self, "Success", "Groq API Key saved successfully!\n\nYou can now use AI Teacher features.")
         self.accept()
 
-# Mic Sensitivity Dialog
-class MicSensitivityDialog(QDialog):
-    def __init__(self, parent=None, current_value=300):
+# Mic level meter: a bar with a line marking how loud speech has to be
+class LevelMeter(QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Microphone Sensitivity")
+        self.level = 0
+        self.trigger = 40
+        self.setMinimumHeight(26)
+
+    def set_values(self, level, trigger):
+        if (level, trigger) != (self.level, self.trigger):
+            self.level, self.trigger = level, trigger
+            self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect().adjusted(1, 1, -1, -1)
+        pal = self.palette()
+        p.setPen(pal.color(QPalette.Mid))
+        p.setBrush(pal.color(QPalette.Base))
+        p.drawRoundedRect(r, 4, 4)
+
+        heard = self.level >= self.trigger
+        fill = QColor("#2e7d32") if heard else QColor("#9e9e9e")
+        w = int(r.width() * self.level / 100)
+        if w > 0:
+            p.setPen(Qt.NoPen)
+            p.setBrush(fill)
+            p.drawRoundedRect(r.x(), r.y(), w, r.height(), 4, 4)
+
+        x = r.x() + int(r.width() * self.trigger / 100)
+        p.setPen(QPen(pal.color(QPalette.Text), 2, Qt.DashLine))
+        p.drawLine(x, r.top() - 1, x, r.bottom() + 1)
+        p.end()
+
+
+# Voice Dictation Settings Dialog
+class VoiceSettingsDialog(QDialog):
+    def __init__(self, parent, settings):
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle("Voice Dictation Settings")
         self.setModal(False)
-        self.resize(400, 200)
-        
+        self.setFixedWidth(500)
+        self.monitor = voice_operations.MicMonitor()
+
         layout = QVBoxLayout(self)
-        info_label = QLabel("Adjust microphone sensitivity:\nLower = picks up quieter sounds\nHigher = requires louder speech")
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-        
-        self.level_label = QLabel("Audio Level:")
-        layout.addWidget(self.level_label)
-        
-        self.level_bar = QProgressBar()
-        self.level_bar.setRange(0, 100)
-        self.level_bar.setValue(0)
-        layout.addWidget(self.level_bar)
-        
-        slider_label = QLabel(f"Sensitivity Threshold: {current_value}")
-        layout.addWidget(slider_label)
-        
+        layout.setSpacing(10)
+
+        # Microphone picker
+        layout.addWidget(QLabel("<b>Microphone</b>"))
+        self.device_box = QComboBox()
+        self.device_box.addItem("System default", "")
+        for name in voice_operations.list_input_devices():
+            self.device_box.addItem(name, name)
+        idx = self.device_box.findData(voice_operations.get_device())
+        self.device_box.setCurrentIndex(max(0, idx))
+        self.device_box.currentIndexChanged.connect(self._device_changed)
+        layout.addWidget(self.device_box)
+
+        # Presets
+        layout.addWidget(QLabel("<b>Where are you?</b> Pick one to set the slider for you."))
+        preset_row = QHBoxLayout()
+        self.preset_buttons = {}
+        for label, value, tip in voice_operations.PRESETS:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setAutoDefault(False)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(
+                "QPushButton:checked { background-color: palette(highlight);"
+                " color: palette(highlighted-text); font-weight: bold; }"
+            )
+            btn.clicked.connect(lambda _=False, v=value: self.slider.setValue(v))
+            self.preset_buttons[value] = btn
+            preset_row.addWidget(btn)
+        layout.addLayout(preset_row)
+        self.preset_hint = QLabel()
+        self.preset_hint.setWordWrap(True)
+        self.preset_hint.setStyleSheet("color: gray;")
+        layout.addWidget(self.preset_hint)
+
+        # Sensitivity slider
+        layout.addWidget(QLabel("<b>Sensitivity</b>"))
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(QLabel("Low"))
         self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(100, 4000)
-        self.slider.setValue(current_value)
-        
-        def update_label(value):
-            slider_label.setText(f"Sensitivity Threshold: {value}")
-            voice_operations.set_sensitivity(value)
-        
-        self.slider.valueChanged.connect(update_label)
-        layout.addWidget(self.slider)
-        
-        preset_layout = QHBoxLayout()
-        for label, val in [("Quiet", 200), ("Normal", 300), ("Noisy", 500)]:
-            btn = QPushButton(f"{label} ({val})")
-            btn.clicked.connect(lambda v=val: self.slider.setValue(v))
-            preset_layout.addWidget(btn)
-        
-        layout.addLayout(preset_layout)
-        close_btn = QPushButton("Close")
+        self.slider.setRange(0, 100)
+        self.slider.setValue(voice_operations.get_sensitivity())
+        self.slider.valueChanged.connect(self._sensitivity_changed)
+        slider_row.addWidget(self.slider, 1)
+        slider_row.addWidget(QLabel("High"))
+        self.slider_value = QLabel()
+        self.slider_value.setMinimumWidth(30)
+        self.slider_value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider_row.addWidget(self.slider_value)
+        layout.addLayout(slider_row)
+        explain = QLabel("Higher picks up quieter voices but also more background noise. "
+                         "Lower ignores noise but you need to speak up.")
+        explain.setWordWrap(True)
+        explain.setStyleSheet("color: gray;")
+        layout.addWidget(explain)
+
+        # Live meter
+        test_label = QLabel("<b>Test it:</b> talk normally. The bar should turn green and pass the dashed line.")
+        test_label.setWordWrap(True)
+        layout.addWidget(test_label)
+        self.meter = LevelMeter()
+        layout.addWidget(self.meter)
+        self.meter_status = QLabel()
+        self.meter_status.setWordWrap(True)
+        self.meter_status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self.meter_status.setMinimumHeight(self.meter_status.fontMetrics().lineSpacing() * 3)
+        layout.addWidget(self.meter_status)
+
+        close_btn = QPushButton("Done")
+        close_btn.setDefault(True)
         close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-    
-    def update_level(self, level):
-        self.level_bar.setValue(level)
+        layout.addWidget(close_btn, alignment=Qt.AlignRight)
+        close_btn.setFocus()
+
+        self._peak = 0
+        self._device_note = False
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self._sensitivity_changed(self.slider.value())
+
+    def _sensitivity_changed(self, value):
+        voice_operations.set_sensitivity(value)
+        self.settings.setValue("mic_sensitivity", value)
+        self.slider_value.setText(str(value))
+        hint = "Custom setting."
+        for preset_value, btn in self.preset_buttons.items():
+            btn.setChecked(preset_value == value)
+            if preset_value == value:
+                hint = btn.toolTip()
+        self.preset_hint.setText(hint)
+
+    def _device_changed(self, _index):
+        name = self.device_box.currentData() or ""
+        voice_operations.set_device(name)
+        self.settings.setValue("mic_device", name)
+        self._device_note = voice_operations.is_voice_active()
+        if not self._device_note:
+            self.monitor.start(name)
+
+    def _tick(self):
+        dictating = voice_operations.is_voice_active()
+        if dictating:
+            if self.monitor.running:
+                self.monitor.stop()  # dictation has the mic now
+            level = voice_operations.latest_level
+        else:
+            self._device_note = False
+            if not self.monitor.running and not self.monitor.error:
+                self.monitor.start(voice_operations.get_device())
+            level = self.monitor.level
+        trigger = voice_operations.trigger_level()
+        self.meter.set_values(level, trigger)
+
+        # Hold the loudest recent level briefly so the advice doesn't flicker
+        self._peak = max(level, self._peak - 2)
+        if self.monitor.error and not dictating:
+            msg = self.monitor.error
+        elif self._peak >= trigger:
+            msg = "\u2714 SharkPad can hear you."
+        elif self._peak >= trigger - 15:
+            msg = "Almost. Speak a little louder, or move the slider toward High."
+        else:
+            msg = ("Not hearing speech yet. If you're talking, move the slider toward High "
+                   "or pick a different microphone above.")
+        if self._device_note:
+            msg += "\nThe new microphone will be used the next time you start dictation."
+        self.meter_status.setText(msg)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Word-wrapped labels need the height worked out for the actual width
+        h = self.layout().heightForWidth(self.width())
+        if h > 0:
+            self.setFixedHeight(h)
+        self.monitor.error = ""
+        self.timer.start(50)
+
+    def hideEvent(self, event):
+        self.timer.stop()
+        self.monitor.stop()
+        super().hideEvent(event)
 
 # Load Dyslexia Fonts
 def load_dyslexia_fonts():
@@ -245,7 +387,13 @@ def init_main():
 
     current_file = [None]
     mic_dialog = [None]
-    current_sensitivity = [300]
+
+    # Restore saved dictation settings
+    try:
+        voice_operations.set_sensitivity(int(settings.value("mic_sensitivity", voice_operations.DEFAULT_SENSITIVITY)))
+    except (TypeError, ValueError):
+        voice_operations.set_sensitivity(voice_operations.DEFAULT_SENSITIVITY)
+    voice_operations.set_device(settings.value("mic_device", "") or "")
 
     # Restore saved API key and theme
     saved_token = settings.value("api_key")
@@ -374,33 +522,54 @@ def init_main():
     ai_menu.addSeparator()
 
     # Voice Dictation
-    voice_action = QAction("Toggle Voice Dictation (Ctrl+Shift+V)", window)
-    def toggle_voice_ui():
-        def level_update(l): 
-            if mic_dialog[0] and mic_dialog[0].isVisible(): mic_dialog[0].update_level(l)
-        is_on = voice_operations.toggle_voice(editor, level_update, current_sensitivity[0])
-        window.setWindowTitle("SharkPad is listening..." if is_on else "SharkPad")
+    voice_action = QAction("Voice Dictation (Ctrl+Shift+V)", window)
+    status_bar = window.statusBar()
+
+    def base_title():
+        return "SharkPad" if not current_file[0] else f"SharkPad - {os.path.basename(current_file[0])}"
+
+    def set_voice_ui(is_on):
         preferences_operations.set_hinted_text(
             voice_action,
             "Stop Dictation (Ctrl+Shift+V)" if is_on else "Voice Dictation (Ctrl+Shift+V)",
             show_hints[0],
         )
-        if is_on and mic_dialog[0]: mic_dialog[0].show()
-        elif not is_on and mic_dialog[0]: mic_dialog[0].close()
-    
+        window.setWindowTitle(f"{base_title()} (listening)" if is_on else base_title())
+
+    def voice_status(msg):
+        status_bar.showMessage(f"Dictation: {msg}")
+
+    def voice_error(msg):
+        status_bar.clearMessage()
+        QMessageBox.warning(window, "Voice Dictation", msg)
+
+    def voice_stopped():
+        set_voice_ui(voice_operations.is_voice_active())
+        if not voice_operations.is_voice_active():
+            status_bar.showMessage("Dictation stopped.", 3000)
+
+    def toggle_voice_ui():
+        is_on = voice_operations.toggle_voice(editor, voice_status, voice_error, voice_stopped)
+        set_voice_ui(is_on)
+        if not is_on:
+            status_bar.showMessage("Dictation stopped.", 3000)
+
     voice_action.triggered.connect(toggle_voice_ui)
     ai_menu.addAction(voice_action)
 
-    # Mic Sensitivity
-    mic_settings_action = QAction("Microphone Sensitivity...", window)
+    # Voice Dictation Settings
+    mic_settings_action = QAction("Voice Dictation Settings...", window)
     def show_mic_settings():
         if not mic_dialog[0]:
-            mic_dialog[0] = MicSensitivityDialog(window, current_sensitivity[0])
-            mic_dialog[0].slider.valueChanged.connect(lambda v: current_sensitivity.__setitem__(0, v))
+            mic_dialog[0] = VoiceSettingsDialog(window, settings)
         mic_dialog[0].show()
+        mic_dialog[0].raise_()
+        mic_dialog[0].activateWindow()
     mic_settings_action.triggered.connect(show_mic_settings)
     ai_menu.addAction(mic_settings_action)
     ai_menu.addSeparator()
+
+    app.aboutToQuit.connect(voice_operations.wait_for_shutdown)
 
     # AI Teacher Explain
     summarize_action = QAction("AI Teacher Explain (Ctrl+Shift+T)", window)
