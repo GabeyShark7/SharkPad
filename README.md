@@ -125,6 +125,10 @@ The standalone app is written to `dist/`. Build on each OS you want to ship for.
 | [OpenDyslexic](https://opendyslexic.org/) | Dyslexia-friendly font option |
 | [PyInstaller](https://pyinstaller.org/) | Packaging into standalone apps |
 
+## License
+
+SharkPad is released under the [MIT License](LICENSE). The bundled OpenDyslexic fonts are under their own license, the [SIL Open Font License](https://opendyslexic.org/).
+
 ## Author
 
 Built by [Gabe Alvarado](https://gabealvarado.org).
