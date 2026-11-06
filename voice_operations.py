@@ -12,6 +12,8 @@ warnings.filterwarnings('ignore')
 os.environ.setdefault('ALSA_CARD', 'default')
 
 import numpy as np
+
+import edit_operations
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 # Suppress stderr noise from audio library imports
@@ -381,7 +383,8 @@ def start_voice(editor, on_status=None, on_error=None, on_stopped=None):
         return True
 
     def insert_text(t):
-        editor.insertPlainText(t + " ")
+        # Each phrase is its own undo step, so Ctrl+Z removes the last thing you said
+        edit_operations.insert_as_own_step(editor, t + " ")
 
     def stopped():
         global _voice_worker_ref

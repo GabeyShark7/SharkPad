@@ -2,6 +2,7 @@
 # find & replace, line tools, and Ctrl+mouse-wheel zoom.
 
 import datetime
+import time
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
@@ -144,6 +145,58 @@ def text_stats(editor):
             parts.append(f"about {round(minutes)} min read")
     parts.append(f"Line {line}, Col {col}")
     return "   ·   ".join(parts)
+
+
+class WordUndoGrouper(QObject):
+    """Make Ctrl+Z undo one word at a time.
+
+    Qt merges everything typed since the last Enter into a single undo step,
+    so one Ctrl+Z could erase a whole paragraph. Typing a space or punctuation,
+    or pausing, starts a new step.
+    """
+
+    BOUNDARY = set(" \t.,!?;:")
+    PAUSE_SECONDS = 1.0
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.last_key = 0.0
+        editor.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.KeyPress or obj is not self.editor or self.editor.isReadOnly():
+            return False
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            return False
+        text = event.text()
+        if len(text) != 1 or not text.isprintable():
+            return False
+
+        now = time.monotonic()
+        paused = now - self.last_key > self.PAUSE_SECONDS
+        self.last_key = now
+        if text not in self.BOUNDARY and not paused:
+            return False
+
+        # Inserting inside its own edit block stops Qt merging it into the previous step
+        c = self.editor.textCursor()
+        c.beginEditBlock()
+        c.insertText(text)
+        c.endEditBlock()
+        self.editor.setTextCursor(c)
+        self.editor.ensureCursorVisible()
+        return True
+
+
+def insert_as_own_step(editor, text):
+    """Insert text (e.g. a dictated phrase) as a separate undo step."""
+    c = editor.textCursor()
+    c.beginEditBlock()
+    c.insertText(text)
+    c.endEditBlock()
+    editor.setTextCursor(c)
+    editor.ensureCursorVisible()
 
 
 class CtrlWheelZoom(QObject):
