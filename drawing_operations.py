@@ -368,14 +368,14 @@ class DrawingPad(QWidget):
         layout.addWidget(mode_label)
         
         mode_layout = QHBoxLayout()
-        self.draw_mode_btn = QPushButton("✏️ Draw\n(Ctrl+Shift+D)")
+        self.draw_mode_btn = QPushButton("Draw\n(Ctrl+Shift+D)")
         self.draw_mode_btn.setCheckable(True)
         self.draw_mode_btn.setChecked(True)
         self.draw_mode_btn.clicked.connect(lambda: self.set_mode('draw'))
         self.draw_mode_btn.setStyleSheet("QPushButton:checked { background-color: #4CAF50; color: white; font-weight: bold; }")
         mode_layout.addWidget(self.draw_mode_btn)
         
-        self.select_mode_btn = QPushButton("🔲 Select\n(Ctrl+Shift+S)")
+        self.select_mode_btn = QPushButton("Select\n(Ctrl+Shift+S)")
         self.select_mode_btn.setCheckable(True)
         self.select_mode_btn.clicked.connect(lambda: self.set_mode('select'))
         self.select_mode_btn.setStyleSheet("QPushButton:checked { background-color: #2196F3; color: white; font-weight: bold; }")

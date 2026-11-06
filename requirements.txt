@@ -1,22 +1,19 @@
-# Web scraping / parsing
-beautifulsoup4==4.12.3
-lxml==4.9.3  # optional, faster XML/HTML parsing for BeautifulSoup
-
-# Event signaling
-blinker==1.7.0
-
-# Compression / encoding
-Brotli==1.1.0
-
-# HTTP / requests
-certifi==2023.11.17
-chardet==5.2.0
-idna==3.4
-requests==2.31.0
-
-# CLI helpers
-click==8.1.6
-colorama==0.4.6
+# Versions match the shipped SharkPad release build.
 
 # GUI
-PySide6==6.6.1
+PySide6==6.10.1
+
+# Voice dictation (local Whisper speech-to-text)
+faster-whisper==1.2.1
+SpeechRecognition==3.14.5
+PyAudio==0.2.14
+numpy==2.4.1
+
+# AI Teacher (Groq's OpenAI-compatible API)
+openai==2.15.0
+
+# Spell checking
+pyspellchecker==0.8.4
+
+# Packaging
+pyinstaller

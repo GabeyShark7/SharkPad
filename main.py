@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QProgressBar, QLabel, QSlider, QDialog, QPushButton, QLineEdit
 )
 from PySide6.QtGui import QFont, QFontDatabase, QAction, QKeySequence, QShortcut, QIcon
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSettings
 
 import file_operations
 import view_operations
@@ -16,44 +16,86 @@ import drawing_operations
 import summarization_operations
 from splash import SplashScreen
 
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller unpacks bundled files to a temp folder stored in sys._MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
 # -----------------------------
-# OpenAI Token Dialog
+# AI Teacher (Groq) API Key Dialog
 # -----------------------------
 class OpenAISettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI Teacher Settings")
-        self.setFixedWidth(400)
+        self.setFixedWidth(450)
+        self.settings = QSettings("SharkPadApp", "Settings")
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Enter your OpenAI API Key:"))
+        title_label = QLabel("Setup AI Teacher")
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        layout.addWidget(title_label)
+
+        step1_label = QLabel("Step 1: Get your free API key")
+        step1_label.setStyleSheet("font-size: 12px; font-weight: bold; margin-top: 10px;")
+        layout.addWidget(step1_label)
+
+        link_label = QLabel('<a href="https://console.groq.com/keys">Click here to get a free Groq API key</a>')
+        link_label.setOpenExternalLinks(True)
+        link_label.setStyleSheet("font-size: 11px; color: #0066cc; margin-left: 10px;")
+        layout.addWidget(link_label)
+
+        instruction_label = QLabel("(Sign up or log in, then create a new API key)")
+        instruction_label.setStyleSheet("font-size: 10px; color: gray; margin-left: 10px;")
+        layout.addWidget(instruction_label)
+
+        step2_label = QLabel("Step 2: Enter your API key below")
+        step2_label.setStyleSheet("font-size: 12px; font-weight: bold; margin-top: 15px;")
+        layout.addWidget(step2_label)
+
         self.token_input = QLineEdit()
         self.token_input.setEchoMode(QLineEdit.Password)
-        self.token_input.setPlaceholderText("sk-...")
+        self.token_input.setPlaceholderText("gsk_...")
+
+        # Pre-fill with the key saved from a previous session
+        saved_token = self.settings.value("api_key", "")
+        self.token_input.setText(saved_token)
         layout.addWidget(self.token_input)
 
-        info_label = QLabel("Your key is used locally to connect to the AI Teacher.")
+        info_label = QLabel("Your key is saved locally and remembered for next time.")
         info_label.setStyleSheet("font-size: 10px; color: gray;")
         layout.addWidget(info_label)
 
         btn_layout = QHBoxLayout()
-        save_btn = QPushButton("Save Key")
-        save_btn.clicked.connect(self.save_token)
+        btn_layout.addStretch()
+
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(save_btn)
+
+        save_btn = QPushButton("Save Key")
+        save_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px 15px;")
+        save_btn.clicked.connect(self.save_token)
+
         btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(save_btn)
+        layout.addSpacing(15)
         layout.addLayout(btn_layout)
 
     def save_token(self):
         token = self.token_input.text().strip()
-        if token:
-            summarization_operations.set_api_token(token)
-            QMessageBox.information(self, "Success", "API Key updated successfully!")
-            self.accept()
-        else:
-            QMessageBox.warning(self, "Error", "Please enter a valid token.")
+        if not token.startswith("gsk_"):
+            QMessageBox.warning(self, "Invalid Key", "Groq API keys must start with 'gsk_'.\n\nPlease check your key and try again.")
+            return
+        self.settings.setValue("api_key", token)
+        summarization_operations.set_api_token(token)
+        QMessageBox.information(self, "Success", "Groq API Key saved successfully!\n\nYou can now use AI Teacher features.")
+        self.accept()
 
 # -----------------------------
 # Mic Sensitivity Dialog
@@ -110,9 +152,8 @@ class MicSensitivityDialog(QDialog):
 # Load Dyslexia Fonts 
 # -----------------------------
 def load_dyslexia_fonts():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    regular_path = os.path.join(base_dir, "OpenDyslexic-Regular.ttf")
-    bold_path = os.path.join(base_dir, "OpenDyslexic-Bold.ttf")
+    regular_path = resource_path("OpenDyslexic-Regular.ttf")
+    bold_path = resource_path("OpenDyslexic-Bold.ttf")
     regular_id = QFontDatabase.addApplicationFont(regular_path)
     bold_id = QFontDatabase.addApplicationFont(bold_path)
     regular_family = QFontDatabase.applicationFontFamilies(regular_id)[0] if regular_id != -1 else "Arial"
@@ -189,7 +230,10 @@ def init_main():
     window = QMainWindow()
     window.setWindowTitle("SharkPad")
     window.resize(900, 600)
-    window.setWindowIcon(QIcon("shark_pad_icon.png"))
+    window.setWindowIcon(QIcon(resource_path("shark_pad_icon.ico")))
+
+    # Persisted user settings (API key, font size, theme)
+    settings = QSettings("SharkPadApp", "Settings")
 
     central_widget = QWidget()
     main_layout = QHBoxLayout(central_widget)
@@ -198,7 +242,8 @@ def init_main():
 
     editor = QPlainTextEdit()
     editor.setPlaceholderText("Welcome to SharkPad. Start writing…")
-    editor.setFont(QFont("Arial", 14))
+    saved_font_size = int(settings.value("font_size", 14))
+    editor.setFont(QFont("Arial", saved_font_size))
     main_layout.addWidget(editor)
 
     drawing_pad = drawing_operations.create_drawing_pad()
@@ -211,6 +256,14 @@ def init_main():
     current_file = [None]
     mic_dialog = [None]
     current_sensitivity = [300]
+
+    # Restore saved API key and theme
+    saved_token = settings.value("api_key")
+    if saved_token:
+        summarization_operations.set_api_token(saved_token)
+
+    saved_theme = settings.value("theme", "Light")
+    preferences_operations.apply_theme(editor, saved_theme)
 
     # --- File Menu ---
     file_menu = menu_bar.addMenu("File")
@@ -246,16 +299,21 @@ def init_main():
     wrap_action.setChecked(True)
     wrap_action.triggered.connect(lambda: view_operations.toggle_word_wrap(editor))
     
-    set_font_action = QAction("Set Font Size...", window)
+    set_font_size_action = QAction("Set Font Size...", window)
     font_size_indicator = QAction(f"Font Size: {editor.font().pointSize()}", window)
     font_size_indicator.setDisabled(True)
-    set_font_action.triggered.connect(lambda: font_size_indicator.setText(f"Font Size: {view_operations.set_font_size(editor, window)}"))
+    def change_font_trigger():
+        new_size = view_operations.set_font_size(editor, window)
+        font_size_indicator.setText(f"Font Size: {new_size}")
+        settings.setValue("font_size", new_size)
+
+    set_font_size_action.triggered.connect(change_font_trigger)
 
     drawing_pad_action = QAction("Show Drawing Pad", window, checkable=True)
     drawing_pad_action.setChecked(True)
     drawing_pad_action.triggered.connect(lambda: drawing_pad.setVisible(drawing_pad_action.isChecked()))
     
-    view_menu.addActions([wrap_action, set_font_action, font_size_indicator])
+    view_menu.addActions([wrap_action, set_font_size_action, font_size_indicator])
     view_menu.addSeparator()
     view_menu.addAction(drawing_pad_action)
 
@@ -292,9 +350,14 @@ def init_main():
     # --- Preferences Menu ---
     preferences_menu = menu_bar.addMenu("Preferences")
     themes_menu = QMenu("Color Scheme", window)
+
+    def apply_and_save_theme(t):
+        preferences_operations.apply_theme(editor, t)
+        settings.setValue("theme", t)
+
     for theme in ["Light", "Dark", "Solarized"]:
         action = QAction(theme, window)
-        action.triggered.connect(lambda _, t=theme: preferences_operations.apply_theme(editor, t))
+        action.triggered.connect(lambda _, t=theme: apply_and_save_theme(t))
         themes_menu.addAction(action)
     preferences_menu.addMenu(themes_menu)
 
@@ -313,7 +376,7 @@ def init_main():
         def level_update(l): 
             if mic_dialog[0] and mic_dialog[0].isVisible(): mic_dialog[0].update_level(l)
         is_on = voice_operations.toggle_voice(editor, level_update, current_sensitivity[0])
-        window.setWindowTitle("SharkPad — LISTENING..." if is_on else "SharkPad")
+        window.setWindowTitle("SharkPad is listening..." if is_on else "SharkPad")
         voice_action.setText("Stop Dictation (Ctrl+Shift+V)" if is_on else "Voice Dictation (Ctrl+Shift+V)")
         if is_on and mic_dialog[0]: mic_dialog[0].show()
         elif not is_on and mic_dialog[0]: mic_dialog[0].close()
