@@ -100,7 +100,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-On macOS and Linux, PyAudio needs PortAudio installed first (`brew install portaudio` or `sudo apt install portaudio19-dev`).
+On Linux, microphone capture needs PortAudio installed first (`sudo apt install libportaudio2`). Windows and macOS need nothing extra.
 
 The first time you use voice dictation, the Whisper model downloads automatically.
 
@@ -118,9 +118,9 @@ The standalone app is written to `dist/`. Build on each OS you want to ship for.
 | --- | --- |
 | [PySide6](https://doc.qt.io/qtforpython-6/) (Qt) | The whole interface: editor, drawing canvas, menus, dialogs |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Offline speech-to-text (Whisper `base` model on CPU) |
-| [SpeechRecognition](https://github.com/Uberi/speech_recognition) + PyAudio | Microphone capture |
+| [sounddevice](https://python-sounddevice.readthedocs.io/) | Microphone capture |
 | [NumPy](https://numpy.org/) | Audio processing and silence detection |
-| [openai](https://github.com/openai/openai-python) client with [Groq](https://groq.com/) | AI Teacher (`llama-3.1-8b-instant`) |
+| [openai](https://github.com/openai/openai-python) client with [Groq](https://groq.com/) | AI Teacher (`openai/gpt-oss-20b`) |
 | [pyspellchecker](https://github.com/barrust/pyspellchecker) | Spell checking |
 | [OpenDyslexic](https://opendyslexic.org/) | Dyslexia-friendly font option |
 | [PyInstaller](https://pyinstaller.org/) | Packaging into standalone apps |

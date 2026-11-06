@@ -9,15 +9,30 @@ os.environ['ALSA_CARD'] = 'default'
 from PySide6.QtCore import QThread, Signal, QObject
 import numpy as np
 
+from collections import deque
+
 # Suppress stderr during audio library imports
 _stderr_backup = sys.stderr
 sys.stderr = open(os.devnull, 'w')
 
 try:
-    import speech_recognition as sr
+    # sounddevice ships PortAudio on Windows and macOS, so no compiler is needed
+    import sounddevice as sd
+    MIC_AVAILABLE = True
+except (ImportError, OSError):
+    MIC_AVAILABLE = False
 finally:
     sys.stderr.close()
     sys.stderr = _stderr_backup
+
+# Microphone capture settings
+SAMPLE_RATE = 16000
+CHUNK = 1024                      # samples per read (~64 ms)
+CHUNK_SECONDS = CHUNK / SAMPLE_RATE
+PAUSE_SECONDS = 0.8               # silence that ends a phrase
+MIN_PHRASE_SECONDS = 0.3          # ignore clicks/pops shorter than this
+MAX_PHRASE_SECONDS = 15           # force transcription of long phrases
+PRE_ROLL_SECONDS = 0.5            # audio kept from just before speech starts
 
 # Try to import faster-whisper
 try:
@@ -45,6 +60,9 @@ class VoiceWorker(QThread):
         if not WHISPER_AVAILABLE:
             self.error_occurred.emit("faster-whisper not installed")
             return
+        if not MIC_AVAILABLE:
+            self.error_occurred.emit("sounddevice not installed. Run: pip install sounddevice")
+            return
         
         # Suppress ALSA/JACK during microphone operations
         _original_stderr = sys.stderr
@@ -60,40 +78,57 @@ class VoiceWorker(QThread):
             
             # Now suppress errors for audio operations
             sys.stderr = open(os.devnull, 'w')
-            
-            r = sr.Recognizer()
-            r.energy_threshold = self.energy_threshold
-            r.dynamic_energy_threshold = False  # Manual control for better accuracy
-            r.pause_threshold = 0.8  # Shorter pause for better responsiveness
-            r.phrase_threshold = 0.3
-            r.non_speaking_duration = 0.5
-            
-            mic = sr.Microphone(sample_rate=16000)
-            
-            with mic as src:
-                print("Adjusting for background noise...")
-                r.adjust_for_ambient_noise(src, duration=2)
+
+            pause_chunks = int(PAUSE_SECONDS / CHUNK_SECONDS)
+            min_speech_chunks = int(MIN_PHRASE_SECONDS / CHUNK_SECONDS)
+            max_chunks = int(MAX_PHRASE_SECONDS / CHUNK_SECONDS)
+            pre_roll = deque(maxlen=int(PRE_ROLL_SECONDS / CHUNK_SECONDS))
+
+            phrase = []
+            speech_chunks = 0
+            silent_chunks = 0
+
+            with sd.RawInputStream(samplerate=SAMPLE_RATE, channels=1,
+                                   dtype='int16', blocksize=CHUNK) as stream:
                 print(f"Ready! Sensitivity: {self.energy_threshold}")
                 print("Start speaking...")
-                
+
                 while self.running:
                     try:
-                        # Monitor audio level
-                        audio_data = src.stream.read(1024)
-                        audio_array = np.frombuffer(audio_data, dtype=np.int16)
-                        rms = np.sqrt(np.mean(audio_array**2))
-                        level = min(100, int((rms / 3000) * 100))
-                        self.audio_level.emit(level)
-                        
-                        # Listen for speech with updated threshold
-                        r.energy_threshold = self.energy_threshold
-                        audio = r.listen(src, timeout=0.5, phrase_time_limit=15)
-                        
-                        # Convert to numpy array
-                        raw_data = audio.get_raw_data()
-                        audio_array = np.frombuffer(raw_data, dtype=np.int16)
-                        audio_float = audio_array.astype(np.float32) / 32768.0
-                        
+                        data, _overflowed = stream.read(CHUNK)
+                        chunk = np.frombuffer(data, dtype=np.int16)
+
+                        # Monitor audio level (float math avoids int16 overflow)
+                        rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                        self.audio_level.emit(min(100, int((rms / 3000) * 100)))
+
+                        loud = rms > self.energy_threshold
+                        if not phrase:
+                            if loud:
+                                phrase = list(pre_roll) + [chunk]
+                                speech_chunks, silent_chunks = 1, 0
+                            else:
+                                pre_roll.append(chunk)
+                            continue
+
+                        phrase.append(chunk)
+                        if loud:
+                            speech_chunks += 1
+                            silent_chunks = 0
+                        else:
+                            silent_chunks += 1
+
+                        if silent_chunks < pause_chunks and len(phrase) < max_chunks:
+                            continue
+
+                        audio_chunks, enough_speech = phrase, speech_chunks >= min_speech_chunks
+                        phrase, speech_chunks, silent_chunks = [], 0, 0
+                        pre_roll.clear()
+                        if not enough_speech:
+                            continue
+
+                        audio_float = np.concatenate(audio_chunks).astype(np.float32) / 32768.0
+
                         # Enhanced transcription settings for better accuracy
                         segments, info = model.transcribe(
                             audio_float,
@@ -107,29 +142,19 @@ class VoiceWorker(QThread):
                                 min_silence_duration_ms=500
                             )
                         )
-                        
-                        # Collect text from segments
-                        text_parts = []
-                        for segment in segments:
-                            text_parts.append(segment.text.strip())
-                        
-                        text = " ".join(text_parts).strip()
-                        
-                        if text and len(text) > 0:
+
+                        text = " ".join(seg.text.strip() for seg in segments).strip()
+                        if text:
                             self.text_received.emit(text)
-                            
-                    except sr.WaitTimeoutError:
-                        # Normal timeout, continue listening
-                        continue
+
                     except KeyboardInterrupt:
                         break
                     except Exception as e:
                         # Log individual errors but don't crash
-                        if "timeout" not in str(e).lower():
-                            sys.stderr = _original_stderr
-                            print(f"Recognition error: {e}")
-                            sys.stderr = open(os.devnull, 'w')
-                        
+                        sys.stderr = _original_stderr
+                        print(f"Recognition error: {e}")
+                        sys.stderr = open(os.devnull, 'w')
+
         except Exception as e:
             sys.stderr = _original_stderr
             self.error_occurred.emit(f"Whisper error: {str(e)}")

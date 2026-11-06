@@ -45,16 +45,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      # PyAudio builds against PortAudio on macOS and Linux
+      # sounddevice bundles PortAudio on Windows and macOS; Linux needs the system library
       - name: Install system libraries (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y portaudio19-dev libegl1 libxkbcommon-x11-0 libxcb-cursor0 libfuse2
-
-      - name: Install system libraries (macOS)
-        if: runner.os == 'macOS'
-        run: brew install portaudio
 
       - name: Install Python dependencies
         run: |
