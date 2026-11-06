@@ -2,7 +2,7 @@
 # find & replace, line tools, and Ctrl+mouse-wheel zoom.
 
 import datetime
-import time
+
 
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat
@@ -147,21 +147,17 @@ def text_stats(editor):
     return "   ·   ".join(parts)
 
 
-class WordUndoGrouper(QObject):
-    """Make Ctrl+Z undo one word at a time.
+class LetterUndo(QObject):
+    """Make Ctrl+Z undo one letter at a time.
 
-    Qt merges everything typed since the last Enter into a single undo step,
-    so one Ctrl+Z could erase a whole paragraph. Typing a space or punctuation,
-    or pausing, starts a new step.
+    Qt merges everything typed (or backspaced) since the last Enter into a
+    single undo step, so one Ctrl+Z could erase a whole paragraph. Each
+    keystroke here becomes its own step.
     """
-
-    BOUNDARY = set(" \t.,!?;:")
-    PAUSE_SECONDS = 1.0
 
     def __init__(self, editor):
         super().__init__(editor)
         self.editor = editor
-        self.last_key = 0.0
         editor.installEventFilter(self)
 
     def eventFilter(self, obj, event):
@@ -169,20 +165,21 @@ class WordUndoGrouper(QObject):
             return False
         if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
             return False
-        text = event.text()
-        if len(text) != 1 or not text.isprintable():
-            return False
 
-        now = time.monotonic()
-        paused = now - self.last_key > self.PAUSE_SECONDS
-        self.last_key = now
-        if text not in self.BOUNDARY and not paused:
-            return False
-
-        # Inserting inside its own edit block stops Qt merging it into the previous step
         c = self.editor.textCursor()
+        key, text = event.key(), event.text()
+        if key == Qt.Key_Backspace:
+            action = c.deletePreviousChar
+        elif key == Qt.Key_Delete:
+            action = c.deleteChar
+        elif len(text) == 1 and text.isprintable():
+            action = lambda: c.insertText(text)
+        else:
+            return False
+
+        # Doing it inside its own edit block stops Qt merging it into the previous step
         c.beginEditBlock()
-        c.insertText(text)
+        action()
         c.endEditBlock()
         self.editor.setTextCursor(c)
         self.editor.ensureCursorVisible()

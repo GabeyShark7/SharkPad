@@ -426,7 +426,7 @@ def init_main():
     editor.setAccessibleDescription("Type your notes here")
     editor_layout.addWidget(editor)
 
-    edit_operations.WordUndoGrouper(editor)
+    edit_operations.LetterUndo(editor)
     find_bar = edit_operations.FindBar(editor)
     editor_layout.addWidget(find_bar)
     main_layout.addWidget(editor_area, 1)
