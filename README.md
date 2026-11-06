@@ -70,12 +70,12 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/light.png" alt="SharkPad in light mode"></td>
+    <td width="50%"><img src="docs/screenshots/drawing-pad.png" alt="Drawing pad with the select tool resizing part of a benzene sketch"></td>
     <td width="50%"><img src="docs/screenshots/ai-teacher-setup.png" alt="AI Teacher setup dialog"></td>
   </tr>
   <tr>
-    <td align="center">Light mode</td>
-    <td align="center">AI Teacher setup</td>
+    <td align="center">Select, move and resize anything on the drawing pad</td>
+    <td align="center">AI Teacher setup with a free Groq key</td>
   </tr>
 </table>
 
