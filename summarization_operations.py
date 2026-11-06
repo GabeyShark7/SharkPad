@@ -10,7 +10,8 @@ class FreeTeacherSummarizer:
         Uses Groq's free tier.
         """
         self.client = None
-        self.model = "llama-3.1-8b-instant"
+        # llama-3.1-8b-instant was retired by Groq; gpt-oss-20b is the fast free-tier replacement.
+        self.model = "openai/gpt-oss-20b"
 
     def set_token(self, token):
         # Groq keys always start with "gsk_"; reject anything else up front.
