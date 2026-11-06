@@ -195,7 +195,8 @@ GETTING_STARTED_HTML = """
 <p>SharkPad puts your notes, a drawing pad, and voice dictation in one window.</p>
 <h3>Write</h3>
 <ul>
-<li>Type in the big box on the left. Misspelled words get a red wavy line; right-click one for suggestions.</li>
+<li>Type in the big box on the left. Obvious typos like "teh" fix themselves when you finish the word, and the fix flashes red for a moment. Press <b>Ctrl+Z</b> right away to keep what you typed.</li>
+<li>Words SharkPad isn't sure about get a red wavy line; right-click one for suggestions. Turn either off in the <b>Edit</b> menu.</li>
 <li>Made a mistake? <b>Ctrl+Z</b> undoes it and <b>Ctrl+Y</b> or <b>Ctrl+Shift+Z</b> brings it back.</li>
 <li><b>Ctrl+F</b> finds words and <b>Ctrl+H</b> replaces them.</li>
 <li><b>F5</b> stamps today's date and time, handy at the top of lecture notes.</li>

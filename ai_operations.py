@@ -1,6 +1,6 @@
 from PySide6.QtGui import QTextCharFormat, QColor, QAction
 from PySide6.QtWidgets import QMenu
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QStandardPaths
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QStandardPaths, QObject, QEvent, QElapsedTimer
 from spellchecker import SpellChecker
 import os
 import re
@@ -10,6 +10,35 @@ import edit_operations
 # Engine Setup
 spell = SpellChecker(distance=2)
 ignored_words = set()           # "Ignore All": this session only
+no_autocorrect = set()          # words the user un-did an autocorrect on (this session)
+
+# Everyday words the built-in dictionary is missing, so they're never
+# underlined or "corrected" into something else (lol -> lot, wifi -> wife)
+spell.word_frequency.load_words([
+    "lol", "lmao", "omg", "idk", "tbh", "brb", "btw", "fyi", "asap", "aka", "diy", "faq", "irl",
+    "imo", "smh", "ngl", "jk", "ty", "thx", "pls", "plz", "ok", "okay", "gonna", "wanna", "gotta",
+    "wifi", "app", "apps", "api", "apis", "cpu", "gpu", "ram", "usb", "pdf", "pdfs", "url", "urls",
+    "html", "css", "email", "emails", "online", "offline", "login", "logout", "username", "website",
+    "blog", "vlog", "podcast", "selfie", "emoji", "emojis", "meme", "memes", "youtube", "tiktok",
+    "instagram", "google", "github", "python", "javascript", "java", "laptop", "smartphone",
+    "covid", "etc", "vs", "eg", "ie", "mol", "lim", "sin", "cos", "tan", "dx", "dy", "kg", "km",
+    "cm", "mm", "ml", "mg", "hz", "kj", "dna", "rna", "atp", "adp", "nadh", "nadph", "ph",
+])
+
+# Classic typos that a frequency guess gets wrong or isn't sure about
+COMMON_TYPOS = {
+    "i": "I", "im": "I'm", "ive": "I've", "ill": None, "id": None, "alot": "a lot",
+    "teh": "the", "hte": "the", "wich": "which", "whihc": "which", "becuase": "because",
+    "becasue": "because", "beacuse": "because", "recieve": "receive", "recieved": "received",
+    "beleive": "believe", "freind": "friend", "thier": "their", "untill": "until",
+    "occured": "occurred", "seperate": "separate", "definately": "definitely", "wierd": "weird",
+    "tommorow": "tomorrow", "tomorow": "tomorrow", "truely": "truly", "goverment": "government",
+    "enviroment": "environment", "accomodate": "accommodate", "acheive": "achieve",
+    "arguement": "argument", "calender": "calendar", "concious": "conscious", "existance": "existence",
+    "foriegn": "foreign", "independant": "independent", "occurence": "occurrence",
+    "posession": "possession", "publically": "publicly", "succesful": "successful",
+    "suprise": "surprise", "tounge": "tongue", "wether": "whether", "writting": "writing",
+}
 
 # Words with apostrophes count as one word: don't, it's, Gabe's
 WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)*")
@@ -93,6 +122,82 @@ def suggestions(word, limit=6):
     if word[:1].isupper():
         result = [s[:1].upper() + s[1:] for s in result]
     return result
+
+
+_contractions = None
+
+
+def _apostrophe_fix(w):
+    """dont -> don't, theyre -> they're (or None)."""
+    global _contractions
+    if _contractions is None:
+        _contractions = {c.replace("'", ""): c for c in spell.word_frequency.dictionary if "'" in c}
+    return _contractions.get(w)
+
+
+def _transpositions(w):
+    return {w[:i] + w[i + 1] + w[i] + w[i + 2:] for i in range(len(w) - 1)}
+
+
+def _match_case(original, fix):
+    if original[:1].isupper() and fix[:1].islower():
+        return fix[:1].upper() + fix[1:]
+    return fix
+
+
+AUTOCORRECT_MIN_FREQ = 500      # only correct into reasonably common words
+AUTOCORRECT_RATIO = 3           # ...that are clearly likelier than the runner-up
+
+
+def autocorrection(text, start, word):
+    """The confident fix for a just-typed word, or None to leave it alone.
+
+    Only fixes obvious typos into common words. Anything uncertain is left
+    for the red underline and right-click suggestions instead.
+    """
+    w = _normalize(word)
+    if w in no_autocorrect or w in ignored_words:
+        return None
+    if w in COMMON_TYPOS:
+        fix = COMMON_TYPOS[w]
+        return _match_case(word, fix) if fix else None
+    if _skip_word(text, start, word) or _is_known(word) or not w.isalpha():
+        return None
+
+    fix = _apostrophe_fix(w)
+    if fix:
+        return _match_case(word, fix)
+
+    freq = spell.word_frequency.dictionary
+    swaps = spell.known(_transpositions(w))
+
+    if len(w) <= 4:
+        # Short words have too many look-alikes; only fix swapped letters (teh, hwo)
+        cands = {c: freq[c] for c in swaps}
+    else:
+        d1 = spell.edit_distance_1(w)
+        cands = {c: freq[c] for c in spell.known(d1)}
+        for e in d1:  # one slip away from a contraction: diont -> dont -> don't
+            f = _apostrophe_fix(e)
+            if f:
+                cands[f] = max(cands.get(f, 0), freq.get(f, 0))
+
+    need = AUTOCORRECT_MIN_FREQ
+    if not cands and len(w) >= 6:
+        cands = {c: freq[c] for c in spell.known(spell.edit_distance_2(w))}
+        need *= 4  # two slips away: only fix into very common words
+    if not cands:
+        return None
+
+    # Swapped letters (liek, taht) are the most common typo, so they get a boost,
+    # but a much more common word still wins (realy -> really, not relay)
+    score = {c: f * (5 if c in swaps else 1) for c, f in cands.items()}
+    ranked = sorted(score.values(), reverse=True)
+    best = max(score, key=score.get)
+    runner_up = ranked[1] if len(ranked) > 1 else 0
+    if cands[best] < need or score[best] < AUTOCORRECT_RATIO * runner_up:
+        return None
+    return _match_case(word, best)
 
 
 # Personal dictionary ("Add to Dictionary"), kept between sessions
@@ -279,3 +384,107 @@ def add_to_dictionary(editor, word):
     except OSError:
         pass
     highlight_misspelled_words(editor)
+
+
+# Autocorrect while typing (like Google Docs)
+AUTOCORRECT_BOUNDARY = set(" \t.,!?;:)\"")
+FLASH_RGB = (229, 57, 53)       # red highlighter
+FLASH_ALPHA = 140
+FLASH_HOLD_MS = 1300
+FLASH_FADE_MS = 700
+_WORD_AT_END = re.compile(WORD_RE.pattern + r"$")
+
+
+class AutoCorrector(QObject):
+    """Fixes obvious typos when a word is finished, then flashes the fix in red.
+
+    Each fix is its own undo step, so Ctrl+Z right after puts back what was
+    typed, and that word is then left alone for the rest of the session.
+    """
+
+    corrected = Signal(str, str)    # what was typed, what it became
+    rejected = Signal(str)          # the user undid a fix of this word
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self.editor = editor
+        self.enabled = True
+        self.flashes = []           # [(QTextCursor over the fix, QElapsedTimer)]
+        self.last = None            # (start, typed word, fix)
+        self.timer = QTimer(self)
+        self.timer.setInterval(40)
+        self.timer.timeout.connect(self._animate)
+        editor.installEventFilter(self)
+        editor.textChanged.connect(self._check_for_undo)
+
+    def eventFilter(self, obj, event):
+        if (obj is self.editor and event.type() == QEvent.KeyPress and self.enabled
+                and not event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)):
+            ends_word = event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab) or (
+                event.text() != "" and event.text() in AUTOCORRECT_BOUNDARY)
+            c = self.editor.textCursor()
+            if ends_word and not c.hasSelection():
+                # The word ends where the cursor is now; check it once the key's
+                # character has been inserted
+                pos = c.position()
+                QTimer.singleShot(0, lambda: self._after_word(pos))
+        return False
+
+    def _after_word(self, pos):
+        doc = self.editor.document()
+        if doc.characterAt(pos) not in AUTOCORRECT_BOUNDARY | {"\u2029", "\t"}:
+            return                     # the key didn't insert anything here
+        block = doc.findBlock(pos)
+        text = block.text()
+        m = _WORD_AT_END.search(text[:pos - block.position()])
+        if not m:
+            return
+        word = m.group()
+        fix = autocorrection(text, m.start(), word)
+        if not fix or fix == word:
+            return
+
+        start = block.position() + m.start()
+        edit_operations.replace_range(self.editor, start, start + len(word), fix)
+        self.last = (start, word, fix)
+        self._flash(start, start + len(fix))
+        self.corrected.emit(word, fix)
+
+    def _check_for_undo(self):
+        if not self.last:
+            return
+        start, word, fix = self.last
+        doc_len = self.editor.document().characterCount() - 1
+        if start + len(word) > doc_len:
+            return
+        now = edit_operations.range_cursor(self.editor, start, start + len(word)).selectedText()
+        if now == word and not edit_operations.range_cursor(
+                self.editor, start, min(doc_len, start + len(fix))).selectedText() == fix:
+            no_autocorrect.add(_normalize(word))
+            self.last = None
+            self.flashes.clear()
+            self._animate()
+            self.rejected.emit(word)
+
+    def _flash(self, start, end):
+        clock = QElapsedTimer()
+        clock.start()
+        self.flashes.append((edit_operations.range_cursor(self.editor, start, end), clock))
+        self._animate()
+        self.timer.start()
+
+    def _animate(self):
+        selections, alive = [], []
+        for cursor, clock in self.flashes:
+            age = clock.elapsed()
+            if age >= FLASH_HOLD_MS + FLASH_FADE_MS or not cursor.hasSelection():
+                continue
+            fade = 1.0 if age < FLASH_HOLD_MS else 1 - (age - FLASH_HOLD_MS) / FLASH_FADE_MS
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor(*FLASH_RGB, int(FLASH_ALPHA * fade)))
+            selections.append(edit_operations.make_selection(cursor, fmt))
+            alive.append((cursor, clock))
+        self.flashes = alive
+        edit_operations.set_selection_layer(self.editor, "autocorrect", selections)
+        if not alive:
+            self.timer.stop()

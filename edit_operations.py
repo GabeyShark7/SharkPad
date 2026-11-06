@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QLineEdit, QPushBu
 
 # Highlights are drawn on top of the text without changing it, so they never
 # end up in the undo history. Later layers draw over earlier ones.
-LAYER_ORDER = ["line", "find", "speech", "spell"]
+LAYER_ORDER = ["line", "find", "speech", "spell", "autocorrect"]
 
 
 def set_selection_layer(editor, name, selections):

@@ -763,6 +763,19 @@ def init_main():
     editor.spellcheck_enabled = spell_on
     add_action(edit_menu, "Check Spelling", set_spell_check, checkable=True, checked=spell_on)
 
+    autocorrector = ai_operations.AutoCorrector(editor)
+    autocorrector.enabled = setting_bool("autocorrect", True)
+    autocorrector.corrected.connect(lambda typed, fix: status_bar.showMessage(
+        f"Autocorrected \"{typed}\" to \"{fix}\"  (Ctrl+Z puts it back)", 4000))
+    autocorrector.rejected.connect(lambda typed: status_bar.showMessage(
+        f"Got it, \"{typed}\" won't be autocorrected again.", 4000))
+
+    def set_autocorrect(on):
+        autocorrector.enabled = on
+        settings.setValue("autocorrect", on)
+
+    add_action(edit_menu, "Autocorrect While Typing", set_autocorrect, checkable=True, checked=autocorrector.enabled)
+
     # View Menu
     view_menu = menu_bar.addMenu("&View")
 

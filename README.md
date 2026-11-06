@@ -27,7 +27,8 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 ## Features
 
 **Write**
-- Fast plain-text editor with spell check (right-click a misspelled word for suggestions)
+- Google Docs-style autocorrect: obvious typos (teh, liek, dont) fix themselves as you type and flash red, and `Ctrl+Z` right after keeps what you typed
+- Spell check with the best suggestion first, and a personal dictionary that's remembered
 - Full undo and redo (`Ctrl+Z`, `Ctrl+Y` or `Ctrl+Shift+Z`), find and replace, duplicate and move lines, and one-key date stamps
 - Word count, character count, and reading time in the status bar
 - Notes and drawings save together, with recent files, print, and export to PDF
