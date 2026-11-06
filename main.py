@@ -753,6 +753,15 @@ def init_main():
     add_action(edit_menu, "Move Line Up (Alt+Up)", lambda: edit_operations.move_lines(editor, up=True))
     add_action(edit_menu, "Move Line Down (Alt+Down)", lambda: edit_operations.move_lines(editor, up=False))
     add_action(edit_menu, "Insert Date and Time (F5)", lambda: edit_operations.insert_date_time(editor))
+    edit_menu.addSeparator()
+
+    def set_spell_check(on):
+        settings.setValue("spell_check", on)
+        ai_operations.set_spellcheck_enabled(editor, on)
+
+    spell_on = setting_bool("spell_check", True)
+    editor.spellcheck_enabled = spell_on
+    add_action(edit_menu, "Check Spelling", set_spell_check, checkable=True, checked=spell_on)
 
     # View Menu
     view_menu = menu_bar.addMenu("&View")
