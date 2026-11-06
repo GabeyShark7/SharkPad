@@ -7,6 +7,46 @@ import os
 pad_size_width = 450
 pad_size_height = 400
 
+# Canvas paper color and default ink for each theme
+LIGHT_BG = QColor("#ffffff")
+DARK_BG = QColor("#1e1e1e")
+LIGHT_INK = QColor(Qt.black)
+DARK_INK = QColor(Qt.white)
+
+
+def swap_default_ink(pixmap, to_dark):
+    """
+    Return a copy of a drawing layer with the default ink flipped:
+    black -> white when going dark, white -> black when going light.
+    Colored strokes are left alone. Works on premultiplied ARGB, so the
+    antialiased edges of each stroke flip along with it.
+    """
+    import numpy as np
+
+    img = pixmap.toImage().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    w, h = img.width(), img.height()
+    bpl = img.bytesPerLine()
+    buf = np.frombuffer(img.constBits(), dtype=np.uint8, count=bpl * h).reshape(h, bpl)
+    px = buf[:, : w * 4].reshape(h, w, 4).copy()  # BGRA byte order
+    b, g, r, a = (px[..., i].astype(np.int16) for i in range(4))
+
+    painted = a > 0
+    if to_dark:
+        # premultiplied black is (0, 0, 0, a)
+        mask = painted & (r <= 8) & (g <= 8) & (b <= 8)
+        px[..., 0][mask] = px[..., 3][mask]
+        px[..., 1][mask] = px[..., 3][mask]
+        px[..., 2][mask] = px[..., 3][mask]
+    else:
+        # premultiplied white is (a, a, a, a)
+        mask = painted & (abs(r - a) <= 8) & (abs(g - a) <= 8) & (abs(b - a) <= 8)
+        px[..., 0][mask] = 0
+        px[..., 1][mask] = 0
+        px[..., 2][mask] = 0
+
+    out = QImage(px.tobytes(), w, h, w * 4, QImage.Format_ARGB32_Premultiplied).copy()
+    return QPixmap.fromImage(out)
+
 class ColorButton(QPushButton):
     """A button that displays a color"""
     def __init__(self, color, callback=None):
@@ -55,7 +95,9 @@ class DrawingCanvas(QLabel):
         
         self.drawing = False
         self.last_point = QPoint()
-        self.current_color = QColor(Qt.black)
+        self.dark = False
+        self.background_color = QColor(LIGHT_BG)
+        self.current_color = QColor(LIGHT_INK)
         self.pen_width = 3
         self.eraser_mode = False
         self.has_drawn = False
@@ -165,10 +207,27 @@ class DrawingCanvas(QLabel):
             self.resizing_image = False
             self.drag_start_pos = None
     
+    def set_dark(self, dark):
+        """Switch the canvas between light and dark paper."""
+        if dark == self.dark:
+            return
+        old_ink = DARK_INK if self.dark else LIGHT_INK
+        self.dark = dark
+        self.background_color = QColor(DARK_BG if dark else LIGHT_BG)
+
+        # Keep existing default-ink strokes visible on the new background
+        self.drawing_layer = swap_default_ink(self.drawing_layer, to_dark=dark)
+
+        # If the pen is still on the default ink, switch it too
+        if not self.eraser_mode and self.current_color.rgb() == old_ink.rgb():
+            self.current_color = QColor(DARK_INK if dark else LIGHT_INK)
+
+        self.update_canvas()
+
     def update_canvas(self):
         """Redraw the entire canvas with images and drawing layer"""
         final_pixmap = QPixmap(self.canvas_width, self.canvas_height)
-        final_pixmap.fill(Qt.white)
+        final_pixmap.fill(self.background_color)
         
         painter = QPainter(final_pixmap)
         painter.setRenderHint(QPainter.Antialiasing, True)
@@ -190,11 +249,11 @@ class DrawingCanvas(QLabel):
             
             # Draw selection rectangle
             if img.selected:
-                painter.setPen(QPen(QColor(0, 120, 215), 2, Qt.DashLine))
+                painter.setPen(QPen(QColor("#d32f2f"), 2, Qt.DashLine))
                 painter.drawRect(img.get_rect())
                 
                 # Draw resize handle (bottom-right corner)
-                painter.setBrush(QColor(0, 120, 215))
+                painter.setBrush(QColor("#d32f2f"))
                 painter.setPen(Qt.NoPen)
                 painter.drawRect(
                     img.x + img.width - corner_size,
@@ -331,8 +390,10 @@ class DrawingCanvas(QLabel):
             )
             painter.drawPixmap(img.x, img.y, scaled_pixmap)
         
-        # Draw the drawing layer
-        painter.drawPixmap(0, 0, self.drawing_layer)
+        # Draw the drawing layer. Always export as black ink on white paper,
+        # so saved drawings look the same no matter which theme was active.
+        layer = swap_default_ink(self.drawing_layer, to_dark=False) if self.dark else self.drawing_layer
+        painter.drawPixmap(0, 0, layer)
         painter.end()
         
         return final_pixmap.save(filepath, "PNG")
@@ -372,13 +433,13 @@ class DrawingPad(QWidget):
         self.draw_mode_btn.setCheckable(True)
         self.draw_mode_btn.setChecked(True)
         self.draw_mode_btn.clicked.connect(lambda: self.set_mode('draw'))
-        self.draw_mode_btn.setStyleSheet("QPushButton:checked { background-color: #4CAF50; color: white; font-weight: bold; }")
+        self.draw_mode_btn.setStyleSheet("QPushButton:checked { background-color: #d32f2f; color: white; font-weight: bold; }")
         mode_layout.addWidget(self.draw_mode_btn)
         
-        self.select_mode_btn = QPushButton("Select\n(Ctrl+Shift+S)")
+        self.select_mode_btn = QPushButton("Select\n(Ctrl+Shift+A)")
         self.select_mode_btn.setCheckable(True)
         self.select_mode_btn.clicked.connect(lambda: self.set_mode('select'))
-        self.select_mode_btn.setStyleSheet("QPushButton:checked { background-color: #2196F3; color: white; font-weight: bold; }")
+        self.select_mode_btn.setStyleSheet("QPushButton:checked { background-color: #d32f2f; color: white; font-weight: bold; }")
         mode_layout.addWidget(self.select_mode_btn)
         layout.addLayout(mode_layout)
         
@@ -501,6 +562,9 @@ class DrawingPad(QWidget):
         while self.recent_colors_layout.count():
             item = self.recent_colors_layout.takeAt(0)
             if item.widget():
+                # Hide first so the old swatch doesn't linger on screen
+                # until Qt gets around to deleting it
+                item.widget().hide()
                 item.widget().deleteLater()
         
         # Add color buttons with callback

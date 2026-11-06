@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from spellchecker import SpellChecker
 import re
 
-# --- Engine Setup ---
+# Engine Setup
 spell = SpellChecker(distance=2)  # Increased for better recognition
 ignored_words = set()
 

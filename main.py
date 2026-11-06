@@ -27,9 +27,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-# -----------------------------
 # AI Teacher (Groq) API Key Dialog
-# -----------------------------
 class OpenAISettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -48,7 +46,7 @@ class OpenAISettingsDialog(QDialog):
 
         link_label = QLabel('<a href="https://console.groq.com/keys">Click here to get a free Groq API key</a>')
         link_label.setOpenExternalLinks(True)
-        link_label.setStyleSheet("font-size: 11px; color: #0066cc; margin-left: 10px;")
+        link_label.setStyleSheet("font-size: 11px; margin-left: 10px;")
         layout.addWidget(link_label)
 
         instruction_label = QLabel("(Sign up or log in, then create a new API key)")
@@ -79,7 +77,7 @@ class OpenAISettingsDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
 
         save_btn = QPushButton("Save Key")
-        save_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px 15px;")
+        save_btn.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold; padding: 5px 15px;")
         save_btn.clicked.connect(self.save_token)
 
         btn_layout.addWidget(cancel_btn)
@@ -97,9 +95,7 @@ class OpenAISettingsDialog(QDialog):
         QMessageBox.information(self, "Success", "Groq API Key saved successfully!\n\nYou can now use AI Teacher features.")
         self.accept()
 
-# -----------------------------
 # Mic Sensitivity Dialog
-# -----------------------------
 class MicSensitivityDialog(QDialog):
     def __init__(self, parent=None, current_value=300):
         super().__init__(parent)
@@ -148,9 +144,7 @@ class MicSensitivityDialog(QDialog):
     def update_level(self, level):
         self.level_bar.setValue(level)
 
-# -----------------------------
-# Load Dyslexia Fonts 
-# -----------------------------
+# Load Dyslexia Fonts
 def load_dyslexia_fonts():
     regular_path = resource_path("OpenDyslexic-Regular.ttf")
     bold_path = resource_path("OpenDyslexic-Bold.ttf")
@@ -160,9 +154,7 @@ def load_dyslexia_fonts():
     bold_family = QFontDatabase.applicationFontFamilies(bold_id)[0] if bold_id != -1 else "Arial"
     return regular_family, bold_family
 
-# -----------------------------
-# File Operations 
-# -----------------------------
+# File Operations
 def open_file(editor, parent, drawing_pad=None):
     file_path, _ = QFileDialog.getOpenFileName(parent, "Open File", "", "Text Files (*.txt);;All Files (*)")
     if not file_path: return None
@@ -218,9 +210,7 @@ def save_file_as(editor, parent, drawing_pad=None):
         QMessageBox.critical(parent, "Error", f"Could not save file:\n{str(e)}")
         return None
 
-# -----------------------------
 # Main App Initialization
-# -----------------------------
 app = QApplication(sys.argv)
 dyslexia_regular_family, dyslexia_bold_family = load_dyslexia_fonts()
 splash = SplashScreen(width=600, height=300)
@@ -232,7 +222,7 @@ def init_main():
     window.resize(900, 600)
     window.setWindowIcon(QIcon(resource_path("shark_pad_icon.ico")))
 
-    # Persisted user settings (API key, font size, theme)
+    # Persisted user settings (API key, font size, theme, shortcut hints)
     settings = QSettings("SharkPadApp", "Settings")
 
     central_widget = QWidget()
@@ -265,7 +255,7 @@ def init_main():
     saved_theme = settings.value("theme", "Light")
     preferences_operations.apply_theme(editor, saved_theme)
 
-    # --- File Menu ---
+    # File Menu
     file_menu = menu_bar.addMenu("File")
     
     def new_file_trigger():
@@ -293,7 +283,7 @@ def init_main():
     
     file_menu.addActions([new_action, open_action, save_action, save_as_action])
 
-    # --- View Menu ---
+    # View Menu
     view_menu = menu_bar.addMenu("View")
     wrap_action = QAction("Word Wrap", window, checkable=True)
     wrap_action.setChecked(True)
@@ -317,7 +307,7 @@ def init_main():
     view_menu.addSeparator()
     view_menu.addAction(drawing_pad_action)
 
-    # --- Dyslexia Font Menu ---
+    # Dyslexia Font Menu
     dyslexia_menu = QMenu("Dyslexia Font", window)
     dyslexia_off_action = QAction("Off", window, checkable=True)
     dyslexia_off_action.setChecked(True)
@@ -347,7 +337,7 @@ def init_main():
     dyslexia_menu.addActions([dyslexia_off_action, dyslexia_regular_action, dyslexia_bold_action])
     view_menu.addMenu(dyslexia_menu)
 
-    # --- Preferences Menu ---
+    # Preferences Menu
     preferences_menu = menu_bar.addMenu("Preferences")
     themes_menu = QMenu("Color Scheme", window)
 
@@ -361,7 +351,20 @@ def init_main():
         themes_menu.addAction(action)
     preferences_menu.addMenu(themes_menu)
 
-    # --- AI Tools Menu ---
+    # Show or hide the "(Ctrl+...)" hints on buttons and menu items
+    show_hints = [str(settings.value("show_shortcut_hints", "true")).lower() == "true"]
+    shortcut_hints_action = QAction("Show Shortcut Hints", window, checkable=True)
+    shortcut_hints_action.setChecked(show_hints[0])
+
+    def toggle_shortcut_hints(checked):
+        show_hints[0] = checked
+        settings.setValue("show_shortcut_hints", checked)
+        preferences_operations.apply_shortcut_hints(window, checked)
+
+    shortcut_hints_action.toggled.connect(toggle_shortcut_hints)
+    preferences_menu.addAction(shortcut_hints_action)
+
+    # AI Tools Menu
     ai_menu = menu_bar.addMenu("AI Tools")
     
     # AI Teacher Settings (Token)
@@ -377,7 +380,11 @@ def init_main():
             if mic_dialog[0] and mic_dialog[0].isVisible(): mic_dialog[0].update_level(l)
         is_on = voice_operations.toggle_voice(editor, level_update, current_sensitivity[0])
         window.setWindowTitle("SharkPad is listening..." if is_on else "SharkPad")
-        voice_action.setText("Stop Dictation (Ctrl+Shift+V)" if is_on else "Voice Dictation (Ctrl+Shift+V)")
+        preferences_operations.set_hinted_text(
+            voice_action,
+            "Stop Dictation (Ctrl+Shift+V)" if is_on else "Voice Dictation (Ctrl+Shift+V)",
+            show_hints[0],
+        )
         if is_on and mic_dialog[0]: mic_dialog[0].show()
         elif not is_on and mic_dialog[0]: mic_dialog[0].close()
     
@@ -422,6 +429,23 @@ def init_main():
     QShortcut(QKeySequence("Ctrl+Shift+T"), window, summarize_text_trigger)
     QShortcut(QKeySequence("Ctrl+Shift+D"), window, lambda: drawing_pad.set_mode('draw'))
     QShortcut(QKeySequence("Ctrl+Shift+E"), window, drawing_pad.canvas.set_eraser)
+
+    # Drawing pad shortcuts (these match the hints shown on the buttons)
+    def add_shortcuts(keys, callback):
+        for k in keys:
+            QShortcut(QKeySequence(k), window, callback)
+
+    add_shortcuts(["Ctrl+Shift+A"], lambda: drawing_pad.set_mode('select'))
+    add_shortcuts(["Ctrl+Shift+U"], drawing_pad.upload_image)
+    add_shortcuts(["Ctrl+Shift+C"], drawing_pad.pick_color)
+    # Shift turns [ and ] into { and } on most keyboards, so bind both forms
+    add_shortcuts(["Ctrl+Shift+]", "Ctrl+}", "Ctrl+Shift+}"], drawing_pad.bring_to_front)
+    add_shortcuts(["Ctrl+Shift+[", "Ctrl+{", "Ctrl+Shift+{"], drawing_pad.send_to_back)
+    add_shortcuts(["Ctrl+]"], drawing_pad.bring_forward)
+    add_shortcuts(["Ctrl+["], drawing_pad.send_backward)
+    add_shortcuts(["Ctrl+Shift+Del"], drawing_pad.delete_image)
+
+    preferences_operations.apply_shortcut_hints(window, show_hints[0])
 
     ai_operations.enable_spellcheck(editor)
     window.show()
