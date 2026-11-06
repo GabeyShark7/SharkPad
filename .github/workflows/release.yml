@@ -1,9 +1,5 @@
 name: Build and Release
 
-# Builds every platform and publishes a GitHub Release.
-# Either push a tag like v1.1.0, or run this workflow from the Actions tab
-# and enter a version (it creates the tag for you).
-# Leave the version blank on a manual run to build without releasing.
 on:
   push:
     tags: ["v*"]
@@ -45,7 +41,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # sounddevice bundles PortAudio on Windows and macOS; Linux needs the system library
       - name: Install system libraries (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -69,9 +64,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           APP=dist/SharkPad.app
-          # Dictation needs microphone access, which macOS only grants if the app says why
           plutil -insert NSMicrophoneUsageDescription -string "SharkPad uses the microphone for voice dictation." "$APP/Contents/Info.plist"
-          # Editing Info.plist breaks the signature, so re-sign (ad-hoc)
           codesign --force --deep --sign - "$APP"
           ditto -c -k --keepParent "$APP" ${{ matrix.asset }}
 

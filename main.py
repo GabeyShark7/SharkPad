@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QPlainTextEdit, QMenu, QWidget, QHBoxLayout, QVBoxLayout,
     QFileDialog, QMessageBox, QLabel, QSlider, QDialog, QPushButton, QLineEdit, QComboBox, QInputDialog
@@ -13,6 +14,7 @@ from PySide6.QtCore import Qt, QTimer, QSettings, QUrl
 import accessibility_operations
 import edit_operations
 import preferences_operations
+import project_operations
 import recovery_operations
 import ai_operations
 import voice_operations
@@ -24,14 +26,12 @@ from splash import SplashScreen
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
     try:
-        # PyInstaller unpacks bundled files to a temp folder stored in sys._MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
 
-# AI Teacher (Groq) API Key Dialog
 class OpenAISettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -65,7 +65,6 @@ class OpenAISettingsDialog(QDialog):
         self.token_input.setEchoMode(QLineEdit.Password)
         self.token_input.setPlaceholderText("gsk_...")
 
-        # Pre-fill with the key saved from a previous session
         saved_token = self.settings.value("api_key", "")
         self.token_input.setText(saved_token)
         layout.addWidget(self.token_input)
@@ -99,7 +98,6 @@ class OpenAISettingsDialog(QDialog):
         QMessageBox.information(self, "Success", "Groq API Key saved successfully!\n\nYou can now use AI Teacher features.")
         self.accept()
 
-# Mic level meter: a bar with a line marking how loud speech has to be
 class LevelMeter(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -135,7 +133,6 @@ class LevelMeter(QWidget):
         p.end()
 
 
-# Voice Dictation Settings Dialog
 class VoiceSettingsDialog(QDialog):
     def __init__(self, parent, settings):
         super().__init__(parent)
@@ -148,7 +145,6 @@ class VoiceSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
 
-        # Microphone picker
         layout.addWidget(QLabel("<b>Microphone</b>"))
         self.device_box = QComboBox()
         self.device_box.addItem("System default", "")
@@ -159,7 +155,6 @@ class VoiceSettingsDialog(QDialog):
         self.device_box.currentIndexChanged.connect(self._device_changed)
         layout.addWidget(self.device_box)
 
-        # Presets
         layout.addWidget(QLabel("<b>Where are you?</b> Pick one to set the slider for you."))
         preset_row = QHBoxLayout()
         self.preset_buttons = {}
@@ -181,7 +176,6 @@ class VoiceSettingsDialog(QDialog):
         self.preset_hint.setStyleSheet("color: gray;")
         layout.addWidget(self.preset_hint)
 
-        # Sensitivity slider
         layout.addWidget(QLabel("<b>Sensitivity</b>"))
         slider_row = QHBoxLayout()
         slider_row.addWidget(QLabel("Low"))
@@ -202,7 +196,6 @@ class VoiceSettingsDialog(QDialog):
         explain.setStyleSheet("color: gray;")
         layout.addWidget(explain)
 
-        # Speed vs accuracy
         layout.addWidget(QLabel("<b>Speed or accuracy</b>"))
         self.quality_box = QComboBox()
         self.quality_box.setAccessibleName("Speech recognition speed or accuracy")
@@ -218,7 +211,6 @@ class VoiceSettingsDialog(QDialog):
         layout.addWidget(self.quality_hint)
         self._update_quality_hint()
 
-        # Live meter
         test_label = QLabel("<b>Test it:</b> talk normally. The bar should turn green and pass the dashed line.")
         test_label.setWordWrap(True)
         layout.addWidget(test_label)
@@ -265,7 +257,6 @@ class VoiceSettingsDialog(QDialog):
         self._update_quality_hint()
         if voice_operations.is_voice_active():
             self.quality_hint.setText(self.quality_hint.text() + " Takes effect next time you start dictation.")
-        # Get the new model ready (downloads once) while the user is still in settings
         voice_operations.preload_model()
 
     def _device_changed(self, _index):
@@ -280,7 +271,7 @@ class VoiceSettingsDialog(QDialog):
         dictating = voice_operations.is_voice_active()
         if dictating:
             if self.monitor.running:
-                self.monitor.stop()  # dictation has the mic now
+                self.monitor.stop()
             level = voice_operations.latest_level
         else:
             self._device_note = False
@@ -290,12 +281,11 @@ class VoiceSettingsDialog(QDialog):
         trigger = voice_operations.trigger_level()
         self.meter.set_values(level, trigger)
 
-        # Hold the loudest recent level briefly so the advice doesn't flicker
         self._peak = max(level, self._peak - 2)
         if self.monitor.error and not dictating:
             msg = self.monitor.error
         elif self._peak >= trigger:
-            msg = "\u2714 SharkPad can hear you."
+            msg = "SharkPad can hear you."
         elif self._peak >= trigger - 15:
             msg = "Almost. Speak a little louder, or move the slider toward High."
         else:
@@ -307,7 +297,6 @@ class VoiceSettingsDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Word-wrapped labels need the height worked out for the actual width
         h = self.layout().heightForWidth(self.width())
         if h > 0:
             self.setFixedHeight(h)
@@ -319,7 +308,6 @@ class VoiceSettingsDialog(QDialog):
         self.monitor.stop()
         super().hideEvent(event)
 
-# Load Dyslexia Fonts
 def load_dyslexia_fonts():
     regular_path = resource_path("OpenDyslexic-Regular.ttf")
     bold_path = resource_path("OpenDyslexic-Bold.ttf")
@@ -328,47 +316,6 @@ def load_dyslexia_fonts():
     regular_family = QFontDatabase.applicationFontFamilies(regular_id)[0] if regular_id != -1 else "Arial"
     bold_family = QFontDatabase.applicationFontFamilies(bold_id)[0] if bold_id != -1 else "Arial"
     return regular_family, bold_family
-
-# File Operations
-def drawing_path_for(path):
-    folder = os.path.dirname(path)
-    base = os.path.splitext(os.path.basename(path))[0]
-    return os.path.join(folder, f"{base}_drawing.png")
-
-
-def write_note(editor, path, drawing_pad):
-    """Save the note and its drawing. Returns True on success."""
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(editor.toPlainText())
-    except OSError as e:
-        QMessageBox.critical(editor.window(), "Couldn't Save", f"Could not save the file:\n{e}")
-        return False
-    editor.document().setModified(False)
-
-    drawing_file = drawing_path_for(path)
-    if drawing_pad.has_drawing():
-        drawing_pad.save_drawing(drawing_file)
-    else:
-        # The pad was cleared, so don't bring the old drawing back next time
-        if os.path.exists(drawing_file):
-            try:
-                os.remove(drawing_file)
-            except OSError:
-                pass
-        drawing_pad.canvas.modified = False
-        drawing_pad.canvas.changed.emit()
-    return True
-
-
-def read_note(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return f.read()
-    except UnicodeDecodeError:
-        with open(path, "r", encoding="latin-1") as f:
-            return f.read()
-
 
 class SharkPadWindow(QMainWindow):
     """Main window that asks about unsaved changes before closing."""
@@ -384,7 +331,6 @@ class SharkPadWindow(QMainWindow):
         super().closeEvent(event)
 
 
-# Main App Initialization
 app = QApplication(sys.argv)
 app.setApplicationName("SharkPad")
 app.setOrganizationName("SharkPadApp")
@@ -393,9 +339,12 @@ splash = SplashScreen(width=600, height=300)
 splash.show_splash()
 
 DEFAULT_FONT_SIZE = 14
-# (letter spacing px, word spacing px)
 TEXT_SPACING = {"Normal": (0.0, 0.0), "Wide": (1.5, 4.0), "Extra Wide": (3.0, 8.0)}
-NOTE_FILTER = "Text Files (*.txt);;All Files (*)"
+OPEN_FILTER = "SharkPad Notes (*_notes.txt *_notes.md *_notes.html);;Text Files (*.txt *.md *.html);;All Files (*)"
+NOTE_TYPE_LABELS = {".txt": ".txt  (plain text)", ".md": ".md  (Markdown)", ".html": ".html  (web page)"}
+IMAGE_TYPE_LABELS = {".png": ".png  (best quality, stays editable)", ".jpg": ".jpg  (smaller file, stays editable)",
+                     ".bmp": ".bmp  (reopens as a flat picture)", ".webp": ".webp  (reopens as a flat picture)",
+                     ".tiff": ".tiff  (reopens as a flat picture)"}
 AI_HEADER = "AI Teacher explanation:\n"
 
 
@@ -404,7 +353,6 @@ def init_main():
     window.resize(1000, 650)
     window.setWindowIcon(QIcon(resource_path("shark_pad_icon.ico")))
 
-    # Persisted user settings
     settings = QSettings("SharkPadApp", "Settings")
 
     def setting_bool(key, default):
@@ -420,7 +368,18 @@ def init_main():
     editor_layout.setContentsMargins(0, 0, 0, 0)
     editor_layout.setSpacing(0)
 
-    editor = QPlainTextEdit()
+    notes_header = QWidget()
+    notes_header_row = QHBoxLayout(notes_header)
+    notes_header_row.setContentsMargins(8, 5, 8, 5)
+    notes_title = QLabel("Notes")
+    notes_title.setStyleSheet("font-weight: bold; font-size: 14px;")
+    notes_header_row.addWidget(notes_title)
+    notes_header_row.addStretch()
+    notes_autosave = edit_operations.AutosaveToggle("notes")
+    notes_header_row.addWidget(notes_autosave)
+    editor_layout.addWidget(notes_header)
+
+    editor = edit_operations.NotesEditor()
     editor.setPlaceholderText("Welcome to SharkPad. Start writing… (Press F1 for help)")
     editor.setAccessibleName("Notes")
     editor.setAccessibleDescription("Type your notes here")
@@ -446,7 +405,6 @@ def init_main():
     help_windows = {}
     state = {"listening": False, "thinking": False, "focus_mode": False, "pad_before_focus": True}
 
-    # Restore saved dictation settings
     try:
         voice_operations.set_sensitivity(int(settings.value("mic_sensitivity", voice_operations.DEFAULT_SENSITIVITY)))
     except (TypeError, ValueError):
@@ -454,7 +412,6 @@ def init_main():
     voice_operations.set_device(settings.value("mic_device", "") or "")
     voice_operations.set_quality(settings.value("dictation_quality", voice_operations.DEFAULT_QUALITY))
 
-    # Restore saved API key and theme
     saved_token = settings.value("api_key")
     if saved_token:
         summarization_operations.set_api_token(saved_token)
@@ -480,12 +437,18 @@ def init_main():
         menu.addAction(action)
         return action
 
-    # Title and unsaved-changes tracking
     def is_dirty():
         return editor.document().isModified() or canvas.modified
 
+    def display_name():
+        if not current_file[0]:
+            return "Untitled"
+        if project_operations.is_project_notes(current_file[0]):
+            return project_operations.split_project(current_file[0])[1]
+        return os.path.basename(current_file[0])
+
     def update_title():
-        name = os.path.basename(current_file[0]) if current_file[0] else "Untitled"
+        name = display_name()
         extra = ""
         if state["thinking"]:
             extra = " - AI Teacher is thinking..."
@@ -497,7 +460,6 @@ def init_main():
     editor.document().modificationChanged.connect(lambda _: update_title())
     canvas.changed.connect(update_title)
 
-    # Editor font: size, dyslexia font and spacing are combined here
     try:
         start_size = int(settings.value("font_size", DEFAULT_FONT_SIZE))
     except (TypeError, ValueError):
@@ -536,7 +498,6 @@ def init_main():
     editor.viewport().installEventFilter(wheel_zoom)
     apply_editor_font()
 
-    # Status bar: word count, cursor position, AI restore button
     stats_label = QLabel()
     stats_label.setAccessibleName("Document statistics")
     status_bar.addPermanentWidget(stats_label)
@@ -554,7 +515,6 @@ def init_main():
     editor.selectionChanged.connect(stats_timer.start)
     stats_timer.start()
 
-    # AI Teacher state (explanations can always be undone)
     ai_state = {"before": None, "after": None, "range": None, "doc_at_start": None}
     restore_action = QAction("Restore Original Text", window)
     restore_action.setEnabled(False)
@@ -564,7 +524,6 @@ def init_main():
         restore_action.setEnabled(False)
         restore_btn.hide()
 
-    # Recent files
     recent_menu = QMenu("Open Recent", window)
 
     def recent_files():
@@ -593,34 +552,96 @@ def init_main():
         settings.setValue("recent_files", files[:8])
         rebuild_recent_menu()
 
-    # File actions
-    def save_to(path):
-        if not write_note(editor, path, drawing_pad):
+    def notes_ext():
+        ext = settings.value("notes_ext", ".txt")
+        return ext if ext in project_operations.NOTE_EXTENSIONS else ".txt"
+
+    def image_ext():
+        allowed = project_operations.image_extensions()
+        ext = settings.value("image_ext", ".png")
+        return ext if ext in allowed else (allowed[0] if allowed else ".png")
+
+    def current_project():
+        if current_file[0] and project_operations.is_project_notes(current_file[0]):
+            return project_operations.split_project(current_file[0])
+        return None
+
+    def saved_stamp():
+        return "Saved " + time.strftime("%I:%M %p").lstrip("0")
+
+    def write_project(folder, name, notes=True, image=True, force=False):
+        notes_file = project_operations.notes_path(folder, name, notes_ext())
+        image_file = project_operations.image_path(folder, name, image_ext())
+        try:
+            os.makedirs(folder, exist_ok=True)
+            if notes:
+                if force or editor.document().isModified() or not os.path.exists(notes_file):
+                    project_operations.write_notes(notes_file, editor.toPlainText(), name)
+                project_operations.remove_other_versions(folder, name, notes_file)
+                editor.document().setModified(False)
+            if image:
+                if drawing_pad.has_drawing():
+                    if force or canvas.modified or not os.path.exists(image_file):
+                        project_operations.write_image(drawing_pad, image_file)
+                    project_operations.remove_other_versions(folder, name, image_file, images=True)
+                else:
+                    project_operations.remove_other_versions(folder, name, None, images=True)
+                canvas.modified = False
+                canvas.changed.emit()
+        except OSError as e:
+            QMessageBox.critical(window, "Couldn't Save", f"Could not save to {folder}:\n{e}")
             return False
-        current_file[0] = path
-        add_recent(path)
-        recovery_operations.clear()
+        if notes:
+            recovery_operations.clear()
+            if os.path.normcase(notes_file) != os.path.normcase(current_file[0] or ""):
+                current_file[0] = notes_file
+                add_recent(notes_file)
+        for box, saved in ((notes_autosave, notes), (drawing_pad.autosave, image)):
+            if saved and box.isChecked():
+                box.set_status(saved_stamp())
         update_title()
-        status_bar.showMessage(f"Saved {os.path.basename(path)}", 3000)
         return True
 
     def save_as():
-        start = current_file[0] or os.path.join(os.path.expanduser("~"), "Documents", "Untitled.txt")
-        path, _ = QFileDialog.getSaveFileName(window, "Save Note", start, NOTE_FILTER)
-        if not path:
+        project = current_project()
+        if project:
+            start_dir, suggested = os.path.dirname(project[0]), project[1]
+        else:
+            start_dir = os.path.join(os.path.expanduser("~"), "Documents")
+            suggested = project_operations.clean_name(current_file[0]) if current_file[0] else "My Notes"
+        chosen, _ = QFileDialog.getSaveFileName(
+            window, "Save - name your notes (they go in a folder with this name)",
+            os.path.join(start_dir, suggested), "SharkPad folder (*)",
+            options=QFileDialog.DontConfirmOverwrite)
+        if not chosen:
             return False
-        if not os.path.splitext(path)[1]:
-            path += ".txt"
-        return save_to(path)
+        folder, name = project_operations.project_from_choice(chosen)
+        same_project = bool(project) and os.path.normcase(folder) == os.path.normcase(project[0]) and name == project[1]
+        if not same_project and project_operations.existing_files(folder, name):
+            reply = QMessageBox.question(
+                window, "Replace Saved Notes?",
+                f"\"{name}\" already has saved notes in:\n{folder}\n\nReplace them?")
+            if reply != QMessageBox.Yes:
+                return False
+        if not write_project(folder, name, force=True):
+            return False
+        status_bar.showMessage(f"Saved \"{name}\" in {folder}", 4000)
+        return True
 
     def save():
-        return save_to(current_file[0]) if current_file[0] else save_as()
+        project = current_project()
+        if not project:
+            return save_as()
+        if not write_project(*project):
+            return False
+        status_bar.showMessage(f"Saved \"{project[1]}\"", 3000)
+        return True
 
     def maybe_save():
         """Ask to save unsaved work. Returns False if the user cancels."""
         if not is_dirty():
             return True
-        name = os.path.basename(current_file[0]) if current_file[0] else "this note"
+        name = display_name() if current_file[0] else "this note"
         box = QMessageBox(QMessageBox.Warning, "Unsaved Changes",
                           f"Do you want to save your changes to {name}?",
                           QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel, window)
@@ -651,11 +672,11 @@ def init_main():
             return
         if not path:
             start = os.path.dirname(current_file[0]) if current_file[0] else ""
-            path, _ = QFileDialog.getOpenFileName(window, "Open Note", start, NOTE_FILTER)
+            path, _ = QFileDialog.getOpenFileName(window, "Open Notes", start, OPEN_FILTER)
         if not path:
             return
         try:
-            text = read_note(path)
+            text = project_operations.read_notes(path)
         except OSError as e:
             QMessageBox.critical(window, "Couldn't Open", f"Could not open the file:\n{e}")
             settings.setValue("recent_files", [p for p in recent_files() if p != path])
@@ -664,15 +685,64 @@ def init_main():
         read_aloud.stop()
         editor.setPlainText(text)
         editor.document().setModified(False)
-        drawing_file = drawing_path_for(path)
-        if os.path.exists(drawing_file):
-            drawing_pad.load_drawing(drawing_file)
+        image_file = project_operations.find_image(path)
+        if image_file:
+            drawing_pad.load_drawing(image_file)
         else:
             canvas.clear_canvas()
         current_file[0] = path
         add_recent(path)
         reset_document()
-        status_bar.showMessage(f"Opened {os.path.basename(path)}", 3000)
+        for box in (notes_autosave, drawing_pad.autosave):
+            box.set_status(saved_stamp() if box.isChecked() and current_project() else "")
+        status_bar.showMessage(f"Opened \"{display_name()}\"", 3000)
+
+    autosave_timers = {}
+
+    def autosave(notes):
+        box = notes_autosave if notes else drawing_pad.autosave
+        project = current_project()
+        if not box.isChecked() or not project:
+            return
+        changed = editor.document().isModified() if notes else canvas.modified
+        if changed:
+            write_project(*project, notes=notes, image=not notes)
+
+    def content_changed(notes):
+        box = notes_autosave if notes else drawing_pad.autosave
+        if not box.isChecked():
+            return
+        if not current_project():
+            box.set_status("Save once (Ctrl+S) to start")
+            return
+        if editor.document().isModified() if notes else canvas.modified:
+            box.set_status("Editing...")
+            autosave_timers[notes].start()
+
+    def toggle_autosave(notes, on):
+        box = notes_autosave if notes else drawing_pad.autosave
+        settings.setValue("autosave_notes" if notes else "autosave_drawing", on)
+        if not on:
+            autosave_timers[notes].stop()
+            box.set_status("")
+            return
+        if not current_project() and not save_as():
+            box.setChecked(False)
+            settings.setValue("autosave_notes" if notes else "autosave_drawing", False)
+            return
+        autosave(notes)
+        box.set_status(saved_stamp())
+
+    for is_notes, box, key in ((True, notes_autosave, "autosave_notes"), (False, drawing_pad.autosave, "autosave_drawing")):
+        timer = QTimer(window)
+        timer.setSingleShot(True)
+        timer.setInterval(1500)
+        timer.timeout.connect(lambda n=is_notes: autosave(n))
+        autosave_timers[is_notes] = timer
+        box.setChecked(setting_bool(key, False))
+        box.toggled.connect(lambda on, n=is_notes: toggle_autosave(n, on))
+    editor.textChanged.connect(lambda: content_changed(True))
+    canvas.changed.connect(lambda: content_changed(False))
 
     def print_note():
         from PySide6.QtPrintSupport import QPrintDialog, QPrinter
@@ -695,7 +765,6 @@ def init_main():
         editor.document().print_(printer)
         status_bar.showMessage(f"Exported {os.path.basename(path)}", 3000)
 
-    # File Menu
     file_menu = menu_bar.addMenu("&File")
     add_action(file_menu, "New (Ctrl+N)", new_note)
     add_action(file_menu, "Open (Ctrl+O)", lambda: open_note())
@@ -710,7 +779,6 @@ def init_main():
     file_menu.addSeparator()
     add_action(file_menu, "Exit (Ctrl+Q)", window.close)
 
-    # Edit Menu
     def canvas_focused():
         return QApplication.focusWidget() is canvas
 
@@ -776,7 +844,6 @@ def init_main():
 
     add_action(edit_menu, "Autocorrect While Typing", set_autocorrect, checkable=True, checked=autocorrector.enabled)
 
-    # View Menu
     view_menu = menu_bar.addMenu("&View")
 
     def set_word_wrap(on):
@@ -786,6 +853,14 @@ def init_main():
     wrap_on = setting_bool("word_wrap", True)
     set_word_wrap(wrap_on)
     add_action(view_menu, "Word Wrap", set_word_wrap, checkable=True, checked=wrap_on)
+
+    def set_line_numbers(on):
+        editor.set_line_numbers(on)
+        settings.setValue("line_numbers", on)
+
+    numbers_on = setting_bool("line_numbers", True)
+    editor.set_line_numbers(numbers_on)
+    add_action(view_menu, "Line Numbers", set_line_numbers, checkable=True, checked=numbers_on)
     view_menu.addSeparator()
     add_action(view_menu, "Zoom In (Ctrl+=)", lambda: zoom(2))
     add_action(view_menu, "Zoom Out (Ctrl+-)", lambda: zoom(-2))
@@ -823,7 +898,6 @@ def init_main():
     focus_action.triggered.connect(lambda _: toggle_focus_mode())
     view_menu.addAction(focus_action)
 
-    # Accessibility Menu
     access_menu = menu_bar.addMenu("&Accessibility")
     read_aloud = accessibility_operations.ReadAloud(editor)
     rate_name = settings.value("tts_rate", "Normal")
@@ -935,7 +1009,6 @@ def init_main():
     high_contrast_action = add_action(access_menu, "High Contrast Colors", toggle_high_contrast,
                                       checkable=True, checked=current_theme[0] == "High Contrast")
 
-    # Preferences Menu
     preferences_menu = menu_bar.addMenu("&Preferences")
     themes_menu = QMenu("Color Scheme", window)
     theme_group = QActionGroup(window)
@@ -947,6 +1020,21 @@ def init_main():
         a.triggered.connect(lambda _=False, t=theme: apply_and_save_theme(t))
     preferences_menu.addMenu(themes_menu)
 
+    file_types_menu = preferences_menu.addMenu("Save File Types")
+    for title, key, choices, labels, current in (
+            ("Notes", "notes_ext", project_operations.NOTE_EXTENSIONS, NOTE_TYPE_LABELS, notes_ext()),
+            ("Drawing", "image_ext", project_operations.image_extensions(), IMAGE_TYPE_LABELS, image_ext())):
+        submenu = file_types_menu.addMenu(title)
+        group = QActionGroup(submenu)
+        for ext in choices:
+            a = submenu.addAction(labels.get(ext, ext))
+            a.setCheckable(True)
+            a.setChecked(ext == current)
+            group.addAction(a)
+            a.triggered.connect(lambda _=False, k=key, e=ext, t=title: (
+                settings.setValue(k, e),
+                status_bar.showMessage(f"{t} will be saved as {e} from now on.", 4000)))
+
     def toggle_shortcut_hints(checked):
         show_hints[0] = checked
         settings.setValue("show_shortcut_hints", checked)
@@ -954,12 +1042,10 @@ def init_main():
 
     add_action(preferences_menu, "Show Shortcut Hints", toggle_shortcut_hints, checkable=True, checked=show_hints[0])
 
-    # AI Tools Menu
     ai_menu = menu_bar.addMenu("AI &Tools")
     add_action(ai_menu, "AI Teacher Settings (Token)...", lambda: OpenAISettingsDialog(window).exec())
     ai_menu.addSeparator()
 
-    # Voice Dictation
     voice_action = QAction("Voice Dictation (Ctrl+Shift+V)", window)
 
     def set_voice_ui(is_on):
@@ -1006,7 +1092,6 @@ def init_main():
 
     app.aboutToQuit.connect(voice_operations.wait_for_shutdown)
 
-    # AI Teacher Explain (works on the selection, or the whole note)
     summarize_action = QAction("AI Teacher Explain (Ctrl+Shift+T)", window)
 
     def explain():
@@ -1038,7 +1123,6 @@ def init_main():
         before = editor.toPlainText()
         start, end = ai_state["range"]
         if before != ai_state["doc_at_start"]:
-            # The notes changed while waiting, so never overwrite: add it at the end
             edit_operations.replace_range(editor, len(before), len(before), "\n\n" + AI_HEADER + result)
         elif keep_notes_action.isChecked():
             edit_operations.replace_range(editor, end, end, "\n\n" + AI_HEADER + result)
@@ -1075,7 +1159,6 @@ def init_main():
     ai_menu.addAction(restore_action)
     restore_btn.clicked.connect(restore_original)
 
-    # Help Menu
     shortcut_groups = [
         ("Files", [("Ctrl+N", "New note"), ("Ctrl+O", "Open a note"), ("Ctrl+S", "Save"),
                    ("Ctrl+Shift+S", "Save As"), ("Ctrl+P", "Print"), ("Ctrl+Q", "Exit")]),
@@ -1088,10 +1171,16 @@ def init_main():
                   ("Ctrl+0", "Reset text size"), ("F11", "Focus Mode (full screen)")]),
         ("Accessibility", [("Ctrl+Shift+R", "Read aloud / stop reading"), ("Esc", "Stop reading, close find, or leave Focus Mode")]),
         ("AI Tools", [("Ctrl+Shift+V", "Voice dictation on / off"), ("Ctrl+Shift+T", "AI Teacher explain")]),
-        ("Drawing Pad", [("Ctrl+Shift+D", "Draw mode"), ("Ctrl+Shift+A", "Select mode"),
-                         ("Ctrl+Shift+E", "Eraser"), ("Ctrl+Shift+C", "Pick a color"),
-                         ("Ctrl+Shift+U", "Upload an image"), ("Ctrl+Shift+] / Ctrl+Shift+[", "Image to front / back"),
-                         ("Ctrl+] / Ctrl+[", "Image forward / backward"), ("Ctrl+Shift+Del", "Delete selected image")]),
+        ("Drawing Pad tools", [("Ctrl+Shift+A  or  V", "Select"), ("Ctrl+Shift+D  or  P", "Pen"),
+                               ("Ctrl+Shift+H  or  H", "Highlighter"), ("Ctrl+Shift+E  or  E", "Eraser"),
+                               ("Ctrl+Shift+X  or  T", "Text"), ("Ctrl+Shift+U", "Add an image"),
+                               ("Ctrl+Shift+C", "Pick a color")]),
+        ("Drawing Pad selection (click the pad first)", [
+            ("Drag on empty space", "Select everything inside the box"), ("Shift+click", "Add or remove from selection"),
+            ("Ctrl+A", "Select everything"), ("Arrow keys / Shift+arrows", "Nudge 1 / 10 pixels"),
+            ("Delete or Backspace", "Delete the selection"), ("Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"),
+            ("Ctrl+D", "Duplicate"), ("Ctrl+Shift+] / Ctrl+Shift+[", "To front / to back"),
+            ("Ctrl+] / Ctrl+[", "Forward / backward one layer"), ("Double-click text", "Edit the text")]),
         ("Help", [("F1", "Keyboard shortcuts")]),
     ]
 
@@ -1119,14 +1208,12 @@ def init_main():
     add_action(help_menu, "About SharkPad", lambda: show_help(
         "about", "About SharkPad", accessibility_operations.about_html()))
 
-    # Right-click menu extras
     explain_ctx = QAction("Explain with AI Teacher", window)
     explain_ctx.triggered.connect(explain)
     read_ctx = QAction("Read Aloud", window)
     read_ctx.triggered.connect(read_aloud.toggle)
     editor.extra_context_actions = [read_ctx, explain_ctx]
 
-    # Shortcuts
     def escape():
         if read_aloud.is_speaking():
             read_aloud.stop()
@@ -1161,13 +1248,13 @@ def init_main():
     bind(["Ctrl+Shift+V"], toggle_voice_ui)
     bind(["Ctrl+Shift+T"], explain)
 
-    # Drawing pad shortcuts (these match the hints shown on the buttons)
     bind(["Ctrl+Shift+D"], lambda: drawing_pad.set_mode('draw'))
-    bind(["Ctrl+Shift+E"], canvas.set_eraser)
+    bind(["Ctrl+Shift+E"], lambda: drawing_pad.set_mode('erase'))
+    bind(["Ctrl+Shift+H"], lambda: drawing_pad.set_mode('highlight'))
+    bind(["Ctrl+Shift+X"], lambda: drawing_pad.set_mode('text'))
     bind(["Ctrl+Shift+A"], lambda: drawing_pad.set_mode('select'))
     bind(["Ctrl+Shift+U"], drawing_pad.upload_image)
     bind(["Ctrl+Shift+C"], drawing_pad.pick_color)
-    # Shift turns [ and ] into { and } on most keyboards, so bind both forms
     bind(["Ctrl+Shift+]", "Ctrl+}", "Ctrl+Shift+}"], drawing_pad.bring_to_front)
     bind(["Ctrl+Shift+[", "Ctrl+{", "Ctrl+Shift+{"], drawing_pad.send_to_back)
     bind(["Ctrl+]"], drawing_pad.bring_forward)
@@ -1176,8 +1263,11 @@ def init_main():
 
     preferences_operations.apply_shortcut_hints(window, show_hints[0])
 
-    # Unsaved work: ask before closing, and keep a crash-recovery backup
     def before_close():
+        for is_notes, timer in autosave_timers.items():
+            if timer.isActive():
+                timer.stop()
+                autosave(is_notes)
         if not maybe_save():
             return False
         read_aloud.stop()
@@ -1220,8 +1310,6 @@ def init_main():
     QTimer.singleShot(1000, splash.close)
     QTimer.singleShot(1200, offer_recovery)
 
-    # Warm up the speech model in the background for people who use dictation,
-    # so pressing Ctrl+Shift+V starts listening right away
     if setting_bool("dictation_used", False):
         QTimer.singleShot(4000, voice_operations.preload_model)
 

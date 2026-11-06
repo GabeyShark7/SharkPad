@@ -1,6 +1,3 @@
-# Accessibility and help for SharkPad: read aloud (text-to-speech with the
-# spoken word highlighted) and the Help menu windows.
-
 import html
 import os
 import sys
@@ -114,9 +111,9 @@ class ReadAloud(QObject):
         if c.hasSelection():
             start, end = c.selectionStart(), c.selectionEnd()
         elif c.position() >= len(text.rstrip()):
-            start, end = 0, len(text)           # cursor at the end: read everything
+            start, end = 0, len(text)
         else:
-            start, end = c.block().position(), len(text)  # read from this paragraph on
+            start, end = c.block().position(), len(text)
 
         chunk = text[start:end]
         if not chunk.strip():
@@ -131,7 +128,6 @@ class ReadAloud(QObject):
         edit_operations.set_selection_layer(self.editor, "speech", [])
 
     def _text_changed(self):
-        # Word positions would be wrong after an edit, so stop reading
         if self.is_speaking():
             self.stop()
 
@@ -150,7 +146,6 @@ class ReadAloud(QObject):
         cursor = edit_operations.range_cursor(self.editor, pos, pos + length)
         edit_operations.set_selection_layer(self.editor, "speech", [edit_operations.make_selection(cursor, fmt)])
 
-        # Keep the spoken word on screen without moving the user's cursor
         rect = self.editor.cursorRect(cursor)
         view_h = self.editor.viewport().height()
         if rect.top() < 0 or rect.bottom() > view_h:
@@ -203,9 +198,15 @@ GETTING_STARTED_HTML = """
 </ul>
 <h3>Draw</h3>
 <ul>
-<li>Sketch on the drawing pad on the right. Click it first, then <b>Ctrl+Z</b> undoes strokes.</li>
-<li>Upload pictures and move or resize them in <b>Select</b> mode.</li>
-<li>The drawing is saved next to your note as a picture.</li>
+<li>Pick a tool on the drawing pad's toolbar: <b>Pen</b>, <b>Highlighter</b>, <b>Eraser</b>, <b>Text</b> or <b>Select</b>.
+With the pad clicked, the keys <b>P</b>, <b>H</b>, <b>E</b>, <b>T</b> and <b>V</b> switch tools too.</li>
+<li><b>Text:</b> click anywhere on the pad and type. Click away or press <b>Esc</b> when done. Double-click text to change it.</li>
+<li><b>Select:</b> drag a box around things to select them, or Shift+click to add more. Drag to move, pull a corner to resize,
+and use the arrow keys to nudge. <b>Delete</b> removes, <b>Ctrl+C</b>/<b>Ctrl+V</b> copy and paste, <b>Ctrl+D</b> duplicates.</li>
+<li>Pick a color or size while something is selected to change it.</li>
+<li>Click the pad first, then <b>Ctrl+Z</b> undoes and <b>Ctrl+Y</b> redoes.</li>
+<li>The first time you press <b>Ctrl+S</b>, type a name. SharkPad makes a folder with that name and saves <b>Name_notes.txt</b> and, if you drew something, <b>Name_img.png</b> inside it.</li>
+<li>Pick other file types (like .md notes or .jpg drawings) in <b>Preferences &gt; Save File Types</b>.</li>
 </ul>
 <h3>Listen</h3>
 <ul>
@@ -220,7 +221,8 @@ GETTING_STARTED_HTML = """
 </ul>
 <h3>Never lose work</h3>
 <ul>
-<li>SharkPad keeps a backup of unsaved notes every 30 seconds. If it closes unexpectedly,
+<li>Tick <b>Autosave</b> in the top-right of the notes or the drawing pad to save every change automatically.</li>
+<li>SharkPad also keeps a backup of unsaved notes every 30 seconds. If it closes unexpectedly,
 it offers to bring them back next time.</li>
 </ul>
 """

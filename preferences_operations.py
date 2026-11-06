@@ -5,7 +5,6 @@ from PySide6.QtWidgets import QApplication, QPlainTextEdit, QPushButton, QStyleF
 
 import drawing_operations
 
-# Window/UI colors per theme. The editor gets its own colors on top of these.
 THEMES = {
     "Light": {
         "window": "#f0f0f0", "base": "#ffffff", "alt_base": "#f7f7f7",
@@ -25,14 +24,12 @@ THEMES = {
         "disabled": "#93a1a1", "editor_bg": "#fdf6e3", "editor_fg": "#657b83",
         "dark": False,
     },
-    # Low-glare warm paper, often easier on the eyes for dyslexic readers
     "Cream": {
         "window": "#efe6d2", "base": "#fbf3e0", "alt_base": "#f4ead4",
         "text": "#2b2b2b", "button": "#efe6d2", "highlight": "#b23a2a", "link": "#b23a2a",
         "disabled": "#8c8273", "editor_bg": "#fbf3e0", "editor_fg": "#1f1f1f",
         "dark": False,
     },
-    # Maximum contrast for low vision: white on black with yellow highlights
     "High Contrast": {
         "window": "#000000", "base": "#000000", "alt_base": "#1a1a1a",
         "text": "#ffffff", "button": "#000000", "highlight": "#ffff00", "link": "#00ffff",
@@ -64,6 +61,32 @@ def _build_palette(t):
     return p
 
 
+def _rgba(hex_color, alpha):
+    c = QColor(hex_color)
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
+
+
+def scrollbar_style(t):
+    high_contrast = bool(t.get("highlighted_text"))
+    ink = "#ffff00" if high_contrast else t["text"]
+    idle, hover, pressed = (_rgba(ink, a) for a in ((0.55, 0.8, 1.0) if high_contrast else (0.28, 0.45, 0.6)))
+    boxes = """
+QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #ffffff; background: #000000; }
+QCheckBox::indicator:checked { background: #ffff00; border: 1px solid #ffff00; }
+""" if high_contrast else ""
+    return boxes + f"""
+QScrollBar:vertical {{ background: transparent; width: 12px; margin: 0; }}
+QScrollBar:horizontal {{ background: transparent; height: 12px; margin: 0; }}
+QScrollBar::handle:vertical {{ background: {idle}; min-height: 32px; margin: 3px 3px 3px 3px; border-radius: 3px; }}
+QScrollBar::handle:horizontal {{ background: {idle}; min-width: 32px; margin: 3px 3px 3px 3px; border-radius: 3px; }}
+QScrollBar::handle:hover {{ background: {hover}; }}
+QScrollBar::handle:pressed {{ background: {pressed}; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; border: none; background: none; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+QAbstractScrollArea::corner {{ background: transparent; }}
+"""
+
+
 def apply_theme(editor: QPlainTextEdit, theme: str):
     """
     Apply a theme/color scheme to the whole app: window, menus, dialogs,
@@ -74,29 +97,25 @@ def apply_theme(editor: QPlainTextEdit, theme: str):
 
     app = QApplication.instance()
     if app is not None:
-        # The native Windows style ignores custom palettes, so use Fusion,
-        # which looks the same on Windows, macOS, and Linux.
         app.setStyle(QStyleFactory.create("Fusion"))
         app.setPalette(_build_palette(t))
+        app.setStyleSheet(scrollbar_style(t))
 
-    editor.setStyleSheet(f"background-color: {t['editor_bg']}; color: {t['editor_fg']};")
+    editor.setStyleSheet(
+        f"QPlainTextEdit {{ background-color: {t['editor_bg']}; color: {t['editor_fg']}; border: none; }}")
 
     window = editor.window()
     if window is not None:
-        # Widgets with their own stylesheet cache the old palette, so
-        # re-apply their stylesheet to pick up the new colors.
         for w in [window] + window.findChildren(QWidget):
             sheet = w.styleSheet()
             if sheet:
                 w.setStyleSheet("")
                 w.setStyleSheet(sheet)
 
-        # Match the drawing canvas to the theme
         for canvas in window.findChildren(drawing_operations.DrawingCanvas):
             canvas.set_dark(t["dark"])
 
 
-# Matches a trailing shortcut hint like " (Ctrl+O)" or "\n(Ctrl+Shift+D)"
 _HINT_RE = re.compile(r"\s*\((?:(?:Ctrl|Shift|Alt)\+[^()]*|F\d{1,2}|Esc)\)\s*$")
 
 

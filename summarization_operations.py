@@ -1,7 +1,3 @@
-# AI Teacher summarization for SharkPad.
-# Uses Groq's OpenAI-compatible API through the official `openai` client.
-# The `openai` package is imported on first use so it doesn't slow down startup.
-
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 
@@ -12,16 +8,14 @@ class FreeTeacherSummarizer:
         """
         self.client = None
         self.token = None
-        # llama-3.1-8b-instant was retired by Groq; gpt-oss-20b is the fast free-tier replacement.
         self.model = "openai/gpt-oss-20b"
 
     def set_token(self, token):
-        # Groq keys always start with "gsk_"; reject anything else up front.
         token = token.strip()
         if not token.startswith("gsk_"):
             return False
         self.token = token
-        self.client = None  # created on first request
+        self.client = None
         return True
 
     def _get_client(self):
@@ -71,7 +65,6 @@ class FreeTeacherSummarizer:
             return False, f"AI Teacher error: {e}"
 
 
-# Global instance for main.py
 _summarizer = None
 
 

@@ -1,6 +1,3 @@
-# Voice dictation for SharkPad: microphone capture (sounddevice) + offline
-# speech-to-text (faster-whisper). Works on Windows, macOS and Linux.
-
 import math
 import os
 import sys
@@ -16,11 +13,9 @@ import numpy as np
 import edit_operations
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-# Suppress stderr noise from audio library imports
 _stderr_backup = sys.stderr
 sys.stderr = open(os.devnull, 'w')
 try:
-    # sounddevice ships PortAudio on Windows and macOS; Linux needs libportaudio2
     import sounddevice as sd
     MIC_AVAILABLE = True
 except (ImportError, OSError):
@@ -30,21 +25,17 @@ finally:
     sys.stderr.close()
     sys.stderr = _stderr_backup
 
-# faster-whisper is heavy to import, so only check it's installed here and
-# import it when the speech model is first needed
 import importlib.util
 WHISPER_AVAILABLE = importlib.util.find_spec("faster_whisper") is not None
 
 
-WHISPER_RATE = 16000              # Whisper expects 16 kHz mono
-CHUNK_SECONDS = 0.05              # mic read size (50 ms)
-PAUSE_SECONDS = 0.6               # silence that ends a phrase
-MIN_PHRASE_SECONDS = 0.3          # ignore clicks/pops shorter than this
-MAX_PHRASE_SECONDS = 15           # force transcription of long phrases
-PRE_ROLL_SECONDS = 0.4            # audio kept from just before speech starts
+WHISPER_RATE = 16000
+CHUNK_SECONDS = 0.05
+PAUSE_SECONDS = 0.6
+MIN_PHRASE_SECONDS = 0.3
+MAX_PHRASE_SECONDS = 15
+PRE_ROLL_SECONDS = 0.4
 
-# Sensitivity is 0-100: higher = picks up quieter speech.
-# Presets shown in the settings dialog: (label, value, description)
 PRESETS = [
     ("Quiet room", 75, "Library or bedroom. Picks up soft voices."),
     ("Normal", 60, "Classroom or home with a little background noise."),
@@ -53,8 +44,8 @@ PRESETS = [
 DEFAULT_SENSITIVITY = 60
 
 _sensitivity = DEFAULT_SENSITIVITY
-_device_name = ""                 # "" = system default microphone
-latest_level = 0                  # last mic level (0-100) seen by the dictation worker
+_device_name = ""
+latest_level = 0
 
 
 def set_sensitivity(value):
@@ -121,7 +112,7 @@ def _resolve_device(name):
                 return i
     except Exception:
         pass
-    return None  # saved mic was unplugged: fall back to the default
+    return None
 
 
 def _open_stream(device_name, callback=None):
@@ -162,8 +153,6 @@ def _friendly_error(e):
     return f"Microphone error: {msg}"
 
 
-# Speech model choices: (label, Whisper model, description). English-only
-# models are faster and more accurate for English than the multilingual ones.
 QUALITY_OPTIONS = [
     ("Fast", "tiny.en", "Quickest, good for older computers. Makes more mistakes."),
     ("Balanced", "base.en", "Quick and accurate. Best for most computers."),
@@ -212,7 +201,7 @@ class _Preloader(QThread):
         try:
             _get_model()
         except Exception:
-            pass  # a real error is reported when dictation starts
+            pass
 
 
 _preloader = None
@@ -302,7 +291,6 @@ class VoiceWorker(QThread):
                         continue
 
                     audio, enough_speech = np.concatenate(phrase), speech_chunks >= min_speech_chunks
-                    # The quiet tail of this phrase may hold the soft start of the next word
                     pre_roll.clear()
                     pre_roll.extend(phrase[-pre_roll.maxlen:])
                     phrase, speech_chunks, silent_chunks = [], 0, 0
@@ -329,11 +317,11 @@ def transcribe(model, audio_float):
     """Turn 16 kHz float32 audio into text."""
     segments, _info = model.transcribe(
         audio_float,
-        beam_size=1,              # greedy decoding: several times faster, near-identical for dictation
+        beam_size=1,
         language="en",
         without_timestamps=True,
         condition_on_previous_text=False,
-        vad_filter=True,  # drops non-speech that slipped past the threshold
+        vad_filter=True,
         vad_parameters=dict(threshold=0.5, min_speech_duration_ms=250, min_silence_duration_ms=500),
     )
     return " ".join(seg.text.strip() for seg in segments).strip()
@@ -369,7 +357,7 @@ class _UiBridge(QObject):
 
 
 _voice_worker_ref = None
-_live_threads = {}                # worker -> bridge, kept alive until the thread finishes
+_live_threads = {}
 
 
 def _forget(worker):
@@ -383,7 +371,6 @@ def start_voice(editor, on_status=None, on_error=None, on_stopped=None):
         return True
 
     def insert_text(t):
-        # Each phrase is its own undo step, so Ctrl+Z removes the last thing you said
         edit_operations.insert_as_own_step(editor, t + " ")
 
     def stopped():

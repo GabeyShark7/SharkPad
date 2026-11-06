@@ -4,16 +4,14 @@ from PySide6.QtCore import Qt, QTimer, QThread, Signal, QStandardPaths, QObject,
 from spellchecker import SpellChecker
 import os
 import re
+import threading
 
 import edit_operations
 
-# Engine Setup
 spell = SpellChecker(distance=2)
-ignored_words = set()           # "Ignore All": this session only
-no_autocorrect = set()          # words the user un-did an autocorrect on (this session)
+ignored_words = set()
+no_autocorrect = set()
 
-# Everyday words the built-in dictionary is missing, so they're never
-# underlined or "corrected" into something else (lol -> lot, wifi -> wife)
 spell.word_frequency.load_words([
     "lol", "lmao", "omg", "idk", "tbh", "brb", "btw", "fyi", "asap", "aka", "diy", "faq", "irl",
     "imo", "smh", "ngl", "jk", "ty", "thx", "pls", "plz", "ok", "okay", "gonna", "wanna", "gotta",
@@ -25,7 +23,6 @@ spell.word_frequency.load_words([
     "cm", "mm", "ml", "mg", "hz", "kj", "dna", "rna", "atp", "adp", "nadh", "nadph", "ph",
 ])
 
-# Classic typos that a frequency guess gets wrong or isn't sure about
 COMMON_TYPOS = {
     "i": "I", "im": "I'm", "ive": "I've", "ill": None, "id": None, "alot": "a lot",
     "teh": "the", "hte": "the", "wich": "which", "whihc": "which", "becuase": "because",
@@ -40,7 +37,6 @@ COMMON_TYPOS = {
     "suprise": "surprise", "tounge": "tongue", "wether": "whether", "writting": "writing",
 }
 
-# Words with apostrophes count as one word: don't, it's, Gabe's
 WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)*")
 CONTRACTION_ENDINGS = {"s", "t", "re", "ve", "ll", "d", "m"}
 
@@ -55,7 +51,6 @@ def _is_known(word):
     if w in ignored_words or spell.known([w]):
         return True
     base, apostrophe, ending = w.partition("'")
-    # Possessives and contractions of known words: shark's, Mendel's, teacher'll
     return bool(apostrophe) and ending in CONTRACTION_ENDINGS and (base in ignored_words or bool(spell.known([base])))
 
 
@@ -64,15 +59,13 @@ def _skip_word(text, start, word):
     letters = word.replace("'", "").replace("’", "")
     if len(letters) < 2:
         return True
-    if letters.isupper():                       # NASA, ATP, DNA
+    if letters.isupper():
         return True
-    if any(ch.isupper() for ch in letters[1:]):  # iPhone, McDonald
+    if any(ch.isupper() for ch in letters[1:]):
         return True
     if word[0].isupper():
-        # A capitalized possessive (Gabe's, Mendel's) is almost always a name
         if _normalize(word).endswith("'s"):
             return True
-        # A capital in the middle of a sentence is almost always a name
         before = text[:start].rstrip(" \t\"'(“‘[")
         if before and before[-1] not in ".!?:\n ":
             return True
@@ -102,14 +95,13 @@ def suggestions(word, limit=6):
     w = _normalize(word)
     ranked = []
 
-    # Missing apostrophe: dont -> don't, isnt -> isn't, theyre -> they're
     for i in range(1, len(w)):
         with_apostrophe = w[:i] + "'" + w[i:]
         if spell.known([with_apostrophe]):
             ranked.append(with_apostrophe)
 
     freq = spell.word_frequency.dictionary
-    others = (spell.candidates(w) or set()) - {w}
+    others = (spell.known(spell.edit_distance_1(w)) or _two_edits_away(w)) - {w}
     ranked += sorted(others, key=lambda c: -freq.get(c, 0))
 
     seen, result = set(), []
@@ -125,14 +117,57 @@ def suggestions(word, limit=6):
 
 
 _contractions = None
+_near_index = None
+_INDEX_MIN_FREQ = 2000
+
+
+def _deletes(word, depth=2):
+    found, frontier = {word}, {word}
+    for _ in range(depth):
+        frontier = {w[:i] + w[i + 1:] for w in frontier for i in range(len(w))}
+        found |= frontier
+    return found
+
+
+def _edit_distance(a, b):
+    if abs(len(a) - len(b)) > 2:
+        return 3
+    prev2, prev = None, list(range(len(b) + 1))
+    for i in range(1, len(a) + 1):
+        cur = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        prev2, prev = prev, cur
+    return prev[-1]
+
+
+def _two_edits_away(w):
+    if _near_index is None:
+        return set()
+    found = set()
+    for d in _deletes(w):
+        found.update(_near_index.get(d, ()))
+    return {c for c in found if _edit_distance(w, c) <= 2}
+
+
+def build_word_indexes():
+    global _contractions, _near_index
+    words = spell.word_frequency.dictionary
+    _contractions = {c.replace("'", ""): c for c in words if "'" in c}
+    index = {}
+    for w, f in list(words.items()):
+        if f >= _INDEX_MIN_FREQ and len(w) >= 4 and w.isalpha():
+            for d in _deletes(w):
+                index.setdefault(d, []).append(w)
+    _near_index = index
 
 
 def _apostrophe_fix(w):
     """dont -> don't, theyre -> they're (or None)."""
-    global _contractions
-    if _contractions is None:
-        _contractions = {c.replace("'", ""): c for c in spell.word_frequency.dictionary if "'" in c}
-    return _contractions.get(w)
+    return _contractions.get(w) if _contractions else None
 
 
 def _transpositions(w):
@@ -145,8 +180,8 @@ def _match_case(original, fix):
     return fix
 
 
-AUTOCORRECT_MIN_FREQ = 500      # only correct into reasonably common words
-AUTOCORRECT_RATIO = 3           # ...that are clearly likelier than the runner-up
+AUTOCORRECT_MIN_FREQ = 500
+AUTOCORRECT_RATIO = 3
 
 
 def autocorrection(text, start, word):
@@ -172,25 +207,22 @@ def autocorrection(text, start, word):
     swaps = spell.known(_transpositions(w))
 
     if len(w) <= 4:
-        # Short words have too many look-alikes; only fix swapped letters (teh, hwo)
         cands = {c: freq[c] for c in swaps}
     else:
         d1 = spell.edit_distance_1(w)
         cands = {c: freq[c] for c in spell.known(d1)}
-        for e in d1:  # one slip away from a contraction: diont -> dont -> don't
+        for e in d1:
             f = _apostrophe_fix(e)
             if f:
                 cands[f] = max(cands.get(f, 0), freq.get(f, 0))
 
     need = AUTOCORRECT_MIN_FREQ
     if not cands and len(w) >= 6:
-        cands = {c: freq[c] for c in spell.known(spell.edit_distance_2(w))}
-        need *= 4  # two slips away: only fix into very common words
+        cands = {c: freq[c] for c in _two_edits_away(w)}
+        need *= 4
     if not cands:
         return None
 
-    # Swapped letters (liek, taht) are the most common typo, so they get a boost,
-    # but a much more common word still wins (realy -> really, not relay)
     score = {c: f * (5 if c in swaps else 1) for c, f in cands.items()}
     ranked = sorted(score.values(), reverse=True)
     best = max(score, key=score.get)
@@ -200,7 +232,6 @@ def autocorrection(text, start, word):
     return _match_case(word, best)
 
 
-# Personal dictionary ("Add to Dictionary"), kept between sessions
 def _user_dictionary_path():
     folder = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
     if not folder:
@@ -220,7 +251,7 @@ def load_user_dictionary():
 
 
 class SpellCheckWorker(QThread):
-    results_ready = Signal(list, str)  # errors + text hash for validation
+    results_ready = Signal(list, str)
 
     def __init__(self, text, cursor_pos=-1):
         super().__init__()
@@ -229,11 +260,10 @@ class SpellCheckWorker(QThread):
 
     def run(self):
         errors = find_misspellings(self.text, self.cursor_pos)
-        # Send text hash to verify it hasn't changed
         self.results_ready.emit(errors, str(hash(self.text)))
 
 
-_workers = set()              # running checks; old ones finish and are ignored
+_workers = set()
 _last_text_hash = None
 
 
@@ -247,7 +277,6 @@ def highlight_misspelled_words(editor):
     current_text = editor.toPlainText()
     _last_text_hash = str(hash(current_text))
 
-    # Only spare the word being typed when nothing is selected
     c = editor.textCursor()
     cursor_pos = -1 if c.hasSelection() else c.position()
 
@@ -259,13 +288,9 @@ def highlight_misspelled_words(editor):
 
 
 def apply_highlights(editor, errors, text_hash):
-    # Only apply if text hasn't changed since we started checking
     if text_hash != _last_text_hash or not editor:
         return
 
-    # Red wavy underlines are drawn as an overlay, not written into the text,
-    # so they don't add undo steps or fire textChanged (which used to make
-    # the spell check re-run itself forever)
     error_fmt = QTextCharFormat()
     error_fmt.setUnderlineStyle(QTextCharFormat.WaveUnderline)
     error_fmt.setUnderlineColor(QColor(255, 0, 0))
@@ -284,6 +309,7 @@ def set_spellcheck_enabled(editor, on):
 
 def enable_spellcheck(editor):
     load_user_dictionary()
+    threading.Thread(target=build_word_indexes, daemon=True).start()
     editor.setContextMenuPolicy(Qt.CustomContextMenu)
     editor.customContextMenuRequested.connect(lambda pos: show_spellcheck_menu(editor, pos))
 
@@ -294,7 +320,6 @@ def enable_spellcheck(editor):
 
     editor._spellcheck_timer = timer
     editor.textChanged.connect(timer.start)
-    # Moving off a word you just typed checks it
     editor.cursorPositionChanged.connect(timer.start)
 
     QTimer.singleShot(500, lambda: highlight_misspelled_words(editor))
@@ -328,7 +353,7 @@ def show_spellcheck_menu(editor, pos):
             a = QAction(s, menu)
             if i == 0:
                 f = a.font()
-                f.setBold(True)  # the best guess
+                f.setBold(True)
                 a.setFont(f)
             a.triggered.connect(lambda _=False, n=s: replace_word(editor, start, end, n))
             menu.addAction(a)
@@ -386,9 +411,8 @@ def add_to_dictionary(editor, word):
     highlight_misspelled_words(editor)
 
 
-# Autocorrect while typing (like Google Docs)
 AUTOCORRECT_BOUNDARY = set(" \t.,!?;:)\"")
-FLASH_RGB = (229, 57, 53)       # red highlighter
+FLASH_RGB = (229, 57, 53)
 FLASH_ALPHA = 140
 FLASH_HOLD_MS = 1300
 FLASH_FADE_MS = 700
@@ -402,15 +426,15 @@ class AutoCorrector(QObject):
     typed, and that word is then left alone for the rest of the session.
     """
 
-    corrected = Signal(str, str)    # what was typed, what it became
-    rejected = Signal(str)          # the user undid a fix of this word
+    corrected = Signal(str, str)
+    rejected = Signal(str)
 
     def __init__(self, editor):
         super().__init__(editor)
         self.editor = editor
         self.enabled = True
-        self.flashes = []           # [(QTextCursor over the fix, QElapsedTimer)]
-        self.last = None            # (start, typed word, fix)
+        self.flashes = []
+        self.last = None
         self.timer = QTimer(self)
         self.timer.setInterval(40)
         self.timer.timeout.connect(self._animate)
@@ -424,8 +448,6 @@ class AutoCorrector(QObject):
                 event.text() != "" and event.text() in AUTOCORRECT_BOUNDARY)
             c = self.editor.textCursor()
             if ends_word and not c.hasSelection():
-                # The word ends where the cursor is now; check it once the key's
-                # character has been inserted
                 pos = c.position()
                 QTimer.singleShot(0, lambda: self._after_word(pos))
         return False
@@ -433,7 +455,7 @@ class AutoCorrector(QObject):
     def _after_word(self, pos):
         doc = self.editor.document()
         if doc.characterAt(pos) not in AUTOCORRECT_BOUNDARY | {"\u2029", "\t"}:
-            return                     # the key didn't insert anything here
+            return
         block = doc.findBlock(pos)
         text = block.text()
         m = _WORD_AT_END.search(text[:pos - block.position()])

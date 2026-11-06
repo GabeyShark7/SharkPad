@@ -1,6 +1,3 @@
-# Crash recovery for SharkPad: keeps a copy of unsaved notes so they can be
-# brought back if the app closes unexpectedly.
-
 import datetime
 import json
 import os
@@ -23,7 +20,7 @@ def save(text, file_path):
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
-        os.replace(tmp, path)  # never leaves a half-written backup
+        os.replace(tmp, path)
     except OSError:
         pass
 

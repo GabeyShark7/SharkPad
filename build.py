@@ -16,7 +16,7 @@ import sys
 
 import PyInstaller.__main__
 
-SEP = os.pathsep  # ';' on Windows, ':' on macOS/Linux
+SEP = os.pathsep
 
 DATA_FILES = [
     "OpenDyslexic-Regular.ttf",
@@ -31,12 +31,10 @@ args = [
     "--noconfirm",
     "--clean",
     "--collect-all=faster_whisper",
-    # pyspellchecker loads its word lists from data files at import time
     "--collect-data=spellchecker",
 ]
 
 if sys.platform == "darwin":
-    # macOS apps must be a folder bundle (.app); one-file mode is deprecated there
     args += ["--onedir", "--icon=shark_pad_icon.png", "--osx-bundle-identifier=net.sharkpad.app"]
 else:
     args.append("--onefile")
@@ -44,8 +42,6 @@ else:
         args.append("--icon=shark_pad_icon.ico")
 
 if sys.platform.startswith("linux"):
-    # Qt 6.5+ needs libxcb-cursor to open a window on X11, and many distros
-    # don't install it by default, so ship it inside the app
     import glob
     libs = glob.glob("/usr/lib/*/libxcb-cursor.so.0")
     if not libs:
@@ -54,5 +50,6 @@ if sys.platform.startswith("linux"):
 
 for f in DATA_FILES:
     args.append(f"--add-data={f}{SEP}.")
+args.append(f"--add-data=icons{SEP}icons")
 
 PyInstaller.__main__.run(args)

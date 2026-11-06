@@ -31,13 +31,18 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 - Spell check with the best suggestion first, and a personal dictionary that's remembered
 - Full undo and redo (`Ctrl+Z`, `Ctrl+Y` or `Ctrl+Shift+Z`), find and replace, duplicate and move lines, and one-key date stamps
 - Word count, character count, and reading time in the status bar
-- Notes and drawings save together, with recent files, print, and export to PDF
+- Every save goes in its own folder: name it once and get `Name/Name_notes.txt` and `Name/Name_img.png`
+- Choose the file types in **Preferences > Save File Types** (notes: .txt, .md, .html; drawing: .png, .jpg, .bmp, .webp, .tiff)
+- **Autosave** checkboxes on the notes and the drawing pad save every change automatically
+- Line numbers, recent files, print, and export to PDF
 - Asks before you lose unsaved changes, and keeps a crash-recovery backup every 30 seconds
 
 **Draw**
-- Freehand drawing with a color picker and recent colors
-- Upload images, then move, resize, and layer them
-- Eraser and clear-all, with undo and redo for every stroke
+- Pen, highlighter, eraser and text tools on a clean icon toolbar, with a color palette and size slider
+- Type text anywhere on the pad and double-click to edit it later
+- Drag a box to select strokes, text and images together, then move, resize, recolor, copy, duplicate, layer or delete them
+- The eraser cuts through strokes, and every change can be undone
+- Drawings saved as .png or .jpg reopen fully editable
 
 **Listen**
 - Voice dictation that types into your notes as you talk
@@ -94,14 +99,13 @@ Press `F1` in the app for the full list. On a Mac, use `Cmd` instead of `Ctrl`.
 | Voice dictation on/off | `Ctrl+Shift+V` |
 | AI Teacher explain | `Ctrl+Shift+T` |
 | Keyboard shortcuts | `F1` |
-| Draw mode | `Ctrl+Shift+D` |
-| Select mode | `Ctrl+Shift+A` |
-| Eraser | `Ctrl+Shift+E` |
+| Select / Pen / Highlighter / Eraser / Text | `Ctrl+Shift+A` / `D` / `H` / `E` / `X`, or `V` / `P` / `H` / `E` / `T` with the pad clicked |
 | Pick color | `Ctrl+Shift+C` |
-| Upload image | `Ctrl+Shift+U` |
+| Add image | `Ctrl+Shift+U` |
+| Delete / copy / paste / duplicate selection | `Delete` / `Ctrl+C` / `Ctrl+V` / `Ctrl+D` (pad clicked) |
+| Nudge selection | Arrow keys (`Shift` for 10px) |
 | Bring to front / send to back | `Ctrl+Shift+]` / `Ctrl+Shift+[` |
 | Forward / backward one layer | `Ctrl+]` / `Ctrl+[` |
-| Delete selected image | `Ctrl+Shift+Del` |
 
 ## Setting Up the AI Teacher
 
@@ -139,6 +143,7 @@ The standalone app is written to `dist/`. Build on each OS you want to ship for.
 | Library | Used for |
 | --- | --- |
 | [PySide6](https://doc.qt.io/qtforpython-6/) (Qt) | The whole interface: editor, drawing canvas, menus, dialogs |
+| [Lucide](https://lucide.dev/) | Toolbar icons (bundled, ISC license) |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | Offline speech-to-text (Whisper `base` model on CPU) |
 | [sounddevice](https://python-sounddevice.readthedocs.io/) | Microphone capture |
 | [NumPy](https://numpy.org/) | Audio processing and silence detection |
