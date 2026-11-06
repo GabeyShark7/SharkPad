@@ -28,16 +28,15 @@ finally:
     sys.stderr.close()
     sys.stderr = _stderr_backup
 
-try:
-    from faster_whisper import WhisperModel
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
+# faster-whisper is heavy to import, so only check it's installed here and
+# import it when the speech model is first needed
+import importlib.util
+WHISPER_AVAILABLE = importlib.util.find_spec("faster_whisper") is not None
 
 
 WHISPER_RATE = 16000              # Whisper expects 16 kHz mono
 CHUNK_SECONDS = 0.05              # mic read size (50 ms)
-PAUSE_SECONDS = 0.8               # silence that ends a phrase
+PAUSE_SECONDS = 0.6               # silence that ends a phrase
 MIN_PHRASE_SECONDS = 0.3          # ignore clicks/pops shorter than this
 MAX_PHRASE_SECONDS = 15           # force transcription of long phrases
 PRE_ROLL_SECONDS = 0.4            # audio kept from just before speech starts
@@ -161,20 +160,69 @@ def _friendly_error(e):
     return f"Microphone error: {msg}"
 
 
+# Speech model choices: (label, Whisper model, description). English-only
+# models are faster and more accurate for English than the multilingual ones.
+QUALITY_OPTIONS = [
+    ("Fast", "tiny.en", "Quickest, good for older computers. Makes more mistakes."),
+    ("Balanced", "base.en", "Quick and accurate. Best for most computers."),
+    ("Accurate", "small.en", "Fewest mistakes, but slower. Needs a fast computer."),
+]
+DEFAULT_QUALITY = "Balanced"
+_quality = DEFAULT_QUALITY
+
 _model = None
+_model_name = None
 _model_lock = threading.Lock()
 
 
+def set_quality(label):
+    global _quality
+    if label in [q[0] for q in QUALITY_OPTIONS]:
+        _quality = label
+
+
+def get_quality():
+    return _quality
+
+
+def _wanted_model_name():
+    return next(m for label, m, _ in QUALITY_OPTIONS if label == _quality)
+
+
 def _get_model():
-    global _model
+    global _model, _model_name
     with _model_lock:
-        if _model is None:
-            _model = WhisperModel("base", device="cpu", compute_type="int8")
+        name = _wanted_model_name()
+        if _model is None or _model_name != name:
+            from faster_whisper import WhisperModel
+            threads = max(1, min(8, (os.cpu_count() or 2) - 1))
+            _model = WhisperModel(name, device="cpu", compute_type="int8", cpu_threads=threads)
+            _model_name = name
         return _model
 
 
 def model_loaded():
-    return _model is not None
+    return _model is not None and _model_name == _wanted_model_name()
+
+
+class _Preloader(QThread):
+    def run(self):
+        try:
+            _get_model()
+        except Exception:
+            pass  # a real error is reported when dictation starts
+
+
+_preloader = None
+
+
+def preload_model():
+    """Load the speech model in the background so dictation starts instantly."""
+    global _preloader
+    if not WHISPER_AVAILABLE or model_loaded() or (_preloader and _preloader.isRunning()):
+        return
+    _preloader = _Preloader()
+    _preloader.start(QThread.LowPriority)
 
 
 class VoiceWorker(QThread):
@@ -198,8 +246,8 @@ class VoiceWorker(QThread):
             return
 
         try:
-            if _model is None:
-                self.status_changed.emit("Loading speech model (the first time downloads about 150 MB)...")
+            if not model_loaded():
+                self.status_changed.emit("Getting the speech model ready (the first time it downloads, which takes a minute)...")
             model = _get_model()
         except Exception as e:
             self.error_occurred.emit(f"Couldn't load the speech model: {e}")
@@ -279,8 +327,9 @@ def transcribe(model, audio_float):
     """Turn 16 kHz float32 audio into text."""
     segments, _info = model.transcribe(
         audio_float,
-        beam_size=5,
+        beam_size=1,              # greedy decoding: several times faster, near-identical for dictation
         language="en",
+        without_timestamps=True,
         condition_on_previous_text=False,
         vad_filter=True,  # drops non-speech that slipped past the threshold
         vad_parameters=dict(threshold=0.5, min_speech_duration_ms=250, min_silence_duration_ms=500),
@@ -386,6 +435,8 @@ def wait_for_shutdown(timeout_ms=5000):
     for w in list(_live_threads):
         w.stop()
         w.wait(timeout_ms)
+    if _preloader is not None:
+        _preloader.wait(timeout_ms)
 
 
 class MicMonitor:

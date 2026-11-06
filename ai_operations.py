@@ -4,6 +4,8 @@ from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from spellchecker import SpellChecker
 import re
 
+import edit_operations
+
 # Engine Setup
 spell = SpellChecker(distance=2)  # Increased for better recognition
 ignored_words = set()
@@ -50,66 +52,40 @@ class SpellCheckWorker(QThread):
         # Send text hash to verify it hasn't changed
         self.results_ready.emit(errors, str(hash(self.text)))
 
-_worker_ref = None
+_workers = set()              # running checks; old ones finish and are ignored
 _last_text_hash = None
 
-def highlight_misspelled_words(editor):
-    global _worker_ref, _last_text_hash
-    
-    current_text = editor.toPlainText()
-    current_hash = str(hash(current_text))
-    
-    # If a worker is already running, stop it
-    if _worker_ref and _worker_ref.isRunning():
-        _worker_ref.terminate()
-        _worker_ref.wait()
 
-    _last_text_hash = current_hash
-    _worker_ref = SpellCheckWorker(current_text)
-    _worker_ref.results_ready.connect(lambda errs, h: apply_highlights(editor, errs, h))
-    _worker_ref.start(QThread.LowPriority)
+def highlight_misspelled_words(editor):
+    global _last_text_hash
+
+    current_text = editor.toPlainText()
+    _last_text_hash = str(hash(current_text))
+
+    worker = SpellCheckWorker(current_text)
+    worker.results_ready.connect(lambda errs, h: apply_highlights(editor, errs, h))
+    worker.finished.connect(lambda: _workers.discard(worker))
+    _workers.add(worker)
+    worker.start(QThread.LowPriority)
+
 
 def apply_highlights(editor, errors, text_hash):
-    global _last_text_hash
-    
     # Only apply if text hasn't changed since we started checking
     if text_hash != _last_text_hash or not editor:
         return
-    
-    doc = editor.document()
-    
-    # Save user cursor and selection
-    cursor = editor.textCursor()
-    old_pos = cursor.position()
-    old_anchor = cursor.anchor()
-    has_selection = cursor.hasSelection()
-    
-    # Create a separate cursor for formatting
-    format_cursor = QTextCursor(doc)
-    
-    # 1. Reset all formatting
-    format_cursor.select(QTextCursor.Document)
-    default_fmt = QTextCharFormat()
-    format_cursor.setCharFormat(default_fmt)
 
-    # 2. Apply red underline (less intrusive than background)
+    # Red wavy underlines are drawn as an overlay, not written into the text,
+    # so they don't add undo steps or fire textChanged (which used to make
+    # the spell check re-run itself forever)
     error_fmt = QTextCharFormat()
     error_fmt.setUnderlineStyle(QTextCharFormat.WaveUnderline)
     error_fmt.setUnderlineColor(QColor(255, 0, 0))
 
-    # 3. Apply to all misspellings
-    for start, end, word in errors:
-        format_cursor.setPosition(start)
-        format_cursor.setPosition(end, QTextCursor.KeepAnchor)
-        format_cursor.setCharFormat(error_fmt)
-    
-    # 4. Restore original cursor position and selection
-    if has_selection:
-        cursor.setPosition(old_anchor)
-        cursor.setPosition(old_pos, QTextCursor.KeepAnchor)
-    else:
-        cursor.setPosition(old_pos)
-    editor.setTextCursor(cursor)
+    selections = [
+        edit_operations.make_selection(edit_operations.range_cursor(editor, start, end), error_fmt)
+        for start, end, _word in errors
+    ]
+    edit_operations.set_selection_layer(editor, "spell", selections)
 
 def enable_spellcheck(editor):
     editor.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -132,13 +108,13 @@ def show_spellcheck_menu(editor, pos):
     
     # Filter out non-alphabetic or ignored words
     if not word or not word.isalpha() or word.lower() in ignored_words:
-        editor.createStandardContextMenu().exec(editor.mapToGlobal(pos))
+        _standard_menu(editor).exec(editor.mapToGlobal(pos))
         return
 
     # Check lowercase version
     lower_word = word.lower()
     if lower_word not in spell.unknown([lower_word]):
-        editor.createStandardContextMenu().exec(editor.mapToGlobal(pos))
+        _standard_menu(editor).exec(editor.mapToGlobal(pos))
         return
     
     # Get suggestions with better matching
@@ -173,8 +149,23 @@ def show_spellcheck_menu(editor, pos):
     add_dict_action = QAction(f"Add '{word}' to Dictionary", menu)
     add_dict_action.triggered.connect(lambda: add_to_dictionary(editor, word))
     menu.addAction(add_dict_action)
-    
+    _add_extra_actions(editor, menu)
+
     menu.exec(editor.mapToGlobal(pos))
+
+
+def _add_extra_actions(editor, menu):
+    extra = getattr(editor, "extra_context_actions", None)
+    if extra:
+        menu.addSeparator()
+        for action in extra:
+            menu.addAction(action)
+
+
+def _standard_menu(editor):
+    menu = editor.createStandardContextMenu()
+    _add_extra_actions(editor, menu)
+    return menu
 
 def replace_word(editor, new_word, pos):
     cursor = editor.cursorForPosition(pos)

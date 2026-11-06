@@ -27,28 +27,38 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 ## Features
 
 **Write**
-- Fast plain-text editor with spell check
-- Adjustable font size, word wrap, and an optional dyslexia-friendly font (OpenDyslexic)
-- Notes and drawings save together as a project
+- Fast plain-text editor with spell check (right-click a misspelled word for suggestions)
+- Full undo and redo (`Ctrl+Z`, `Ctrl+Y` or `Ctrl+Shift+Z`), find and replace, duplicate and move lines, and one-key date stamps
+- Word count, character count, and reading time in the status bar
+- Notes and drawings save together, with recent files, print, and export to PDF
+- Asks before you lose unsaved changes, and keeps a crash-recovery backup every 30 seconds
 
 **Draw**
 - Freehand drawing with a color picker and recent colors
 - Upload images, then move, resize, and layer them
-- Eraser and clear-all
+- Eraser and clear-all, with undo and redo for every stroke
 
 **Listen**
 - Voice dictation that types into your notes as you talk
 - Runs locally on your computer with Whisper, so it works offline
-- Pick your microphone and a room preset (Quiet, Normal, Noisy), or fine-tune with a sensitivity slider and live mic meter in **AI Tools > Voice Dictation Settings**
+- Pick your microphone, a room preset (Quiet, Normal, Noisy), and Fast, Balanced, or Accurate recognition in **AI Tools > Voice Dictation Settings**, with a live mic meter to test it
 
 **Understand**
-- **AI Teacher** explains your notes in plain language with one click
+- **AI Teacher** explains your notes (or just the part you select) in plain language
+- Never loses your notes: undo with `Ctrl+Z` or click **Restore original text**, or turn on **Keep My Notes** to add the explanation below them
 - Uses Groq's free API tier, so all you need is a free key
 
+**Accessible**
+- **Read Aloud** (`Ctrl+Shift+R`) highlights each word as it's spoken, with speed and voice options
+- OpenDyslexic font, extra letter and word spacing, and a reading guide that tints the current line
+- High Contrast and low-glare Cream color schemes, a thick text cursor, and zoom with `Ctrl+=` / `Ctrl+-` or Ctrl + mouse wheel
+- Focus Mode (`F11`), labels for screen readers, and every feature reachable from the keyboard
+- Built-in help: **Help > Getting Started**, **Keyboard Shortcuts** (`F1`), **Accessibility Features**, and **Voice Dictation Help**
+
 **Make it yours**
-- Light, Dark, and Solarized themes, applied to the whole app
+- Light, Dark, Solarized, Cream, and High Contrast themes, applied to the whole app
 - Show or hide keyboard shortcut hints
-- Your theme, font size, and API key are remembered between launches
+- Your theme, text size, font, spacing, dictation and reading settings are remembered between launches
 
 ## Screenshots
 
@@ -65,13 +75,24 @@ Some lectures don't fit in a text box. In organic chemistry you're writing notes
 
 ## Keyboard Shortcuts
 
+Press `F1` in the app for the full list. On a Mac, use `Cmd` instead of `Ctrl`.
+
 | Action | Shortcut |
 | --- | --- |
-| Open | `Ctrl+O` |
-| Save | `Ctrl+S` |
-| Save As | `Ctrl+Shift+S` |
+| New / Open / Save / Save As | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
+| Print / Exit | `Ctrl+P` / `Ctrl+Q` |
+| Undo / Redo | `Ctrl+Z` / `Ctrl+Y` or `Ctrl+Shift+Z` (works on the drawing pad too after clicking it) |
+| Find / Replace | `Ctrl+F` / `Ctrl+H` |
+| Next / previous match | `F3` / `Shift+F3` |
+| Duplicate line | `Ctrl+D` |
+| Move line up / down | `Alt+Up` / `Alt+Down` |
+| Insert date and time | `F5` |
+| Bigger / smaller / reset text | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Focus Mode (full screen) | `F11` |
+| Read aloud / stop | `Ctrl+Shift+R` (or `Esc` to stop) |
 | Voice dictation on/off | `Ctrl+Shift+V` |
 | AI Teacher explain | `Ctrl+Shift+T` |
+| Keyboard shortcuts | `F1` |
 | Draw mode | `Ctrl+Shift+D` |
 | Select mode | `Ctrl+Shift+A` |
 | Eraser | `Ctrl+Shift+E` |

@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                                QColorDialog, QLabel, QFrame, QFileDialog, QMessageBox)
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QPainterPath, QKeySequence, QShortcut
-from PySide6.QtCore import Qt, QPoint, QRect, QSize
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QImage, QPainterPath, QKeySequence, QShortcut, QBitmap
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, Signal
 import os
 
 pad_size_width = 450
@@ -87,9 +87,19 @@ class ImageObject:
 
 class DrawingCanvas(QLabel):
     """Canvas widget for drawing and managing images"""
+    changed = Signal()
+    MAX_UNDO = 50
+
     def __init__(self, width=pad_size_width, height=pad_size_height):
         super().__init__()
         self.setFixedSize(width, height)
+        # Clicking the canvas focuses it, so Ctrl+Z undoes drawing instead of typing
+        self.setFocusPolicy(Qt.ClickFocus)
+        self.setAccessibleName("Drawing canvas")
+        self.undo_stack = []
+        self.redo_stack = []
+        self._pending_snapshot = None
+        self.modified = False
         self.canvas_width = width
         self.canvas_height = height
         
@@ -123,6 +133,8 @@ class DrawingCanvas(QLabel):
         if event.button() == Qt.LeftButton:
             pos = event.pos()
             
+            self._pending_snapshot = self._snapshot()
+
             if self.mode == 'select':
                 # Select mode - interact with images
                 clicked_image = None
@@ -167,6 +179,7 @@ class DrawingCanvas(QLabel):
         
         if self.dragging_image and self.selected_image and self.drag_start_pos:
             # Move the image
+            self._commit_pending()
             dx = pos.x() - self.drag_start_pos.x()
             dy = pos.y() - self.drag_start_pos.y()
             self.selected_image.move(dx, dy)
@@ -176,6 +189,7 @@ class DrawingCanvas(QLabel):
         
         elif self.resizing_image and self.selected_image and self.drag_start_pos:
             # Resize the image
+            self._commit_pending()
             dx = pos.x() - self.drag_start_pos.x()
             dy = pos.y() - self.drag_start_pos.y()
             new_width = self.selected_image.width + dx
@@ -187,6 +201,7 @@ class DrawingCanvas(QLabel):
         
         elif self.drawing and event.buttons() & Qt.LeftButton:
             # Draw on the drawing layer
+            self._commit_pending()
             painter = QPainter(self.drawing_layer)
             if self.eraser_mode:
                 painter.setCompositionMode(QPainter.CompositionMode_Clear)
@@ -206,6 +221,82 @@ class DrawingCanvas(QLabel):
             self.dragging_image = False
             self.resizing_image = False
             self.drag_start_pos = None
+            self._pending_snapshot = None
+
+    def _snapshot(self):
+        images = [(i.pixmap, i.x, i.y, i.width, i.height) for i in self.images]
+        return self.drawing_layer.copy(), images, self.dark
+
+    def _push_undo(self, snapshot=None):
+        self.undo_stack.append(snapshot or self._snapshot())
+        if len(self.undo_stack) > self.MAX_UNDO:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def _commit_pending(self):
+        """Save the state from before this mouse action, once it actually changes something."""
+        if self._pending_snapshot is not None:
+            self._push_undo(self._pending_snapshot)
+            self._pending_snapshot = None
+            self._mark_changed()
+
+    def _mark_changed(self):
+        self.modified = True
+        self.changed.emit()
+
+    def _restore(self, snapshot):
+        layer, images, dark = snapshot
+        if dark != self.dark:
+            layer = swap_default_ink(layer, to_dark=self.dark)
+        self.drawing_layer = layer.copy()
+        self.images = []
+        for pixmap, x, y, w, h in images:
+            obj = ImageObject(pixmap, x, y)
+            obj.width, obj.height = w, h
+            self.images.append(obj)
+        self.selected_image = None
+        self.has_drawn = True
+        self.update_canvas()
+        self._mark_changed()
+
+    def undo(self):
+        if not self.undo_stack:
+            return False
+        self.redo_stack.append(self._snapshot())
+        self._restore(self.undo_stack.pop())
+        return True
+
+    def redo(self):
+        if not self.redo_stack:
+            return False
+        self.undo_stack.append(self._snapshot())
+        self._restore(self.redo_stack.pop())
+        return True
+
+    def reset_history(self):
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.modified = False
+        self.changed.emit()
+
+    def load_image(self, filepath):
+        """Load a saved drawing (white paper becomes transparent again)."""
+        img = QImage(filepath)
+        if img.isNull():
+            return False
+        pixmap = QPixmap.fromImage(img.convertToFormat(QImage.Format_ARGB32))
+        pixmap.setMask(QBitmap.fromImage(img.createMaskFromColor(QColor(Qt.white).rgb(), Qt.MaskOutColor)))
+        layer = QPixmap(self.canvas_width, self.canvas_height)
+        layer.fill(Qt.transparent)
+        painter = QPainter(layer)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        self.images.clear()
+        self.selected_image = None
+        self.drawing_layer = swap_default_ink(layer, to_dark=True) if self.dark else layer
+        self.has_drawn = True
+        self.update_canvas()
+        return True
     
     def set_dark(self, dark):
         """Switch the canvas between light and dark paper."""
@@ -294,8 +385,10 @@ class DrawingCanvas(QLabel):
         x = (self.canvas_width - pixmap.width()) // 2
         y = (self.canvas_height - pixmap.height()) // 2
         
+        self._push_undo()
         img_obj = ImageObject(pixmap, x, y)
         self.images.append(img_obj)
+        self._mark_changed()
         self.update_canvas()
         self.has_drawn = True
         return True
@@ -303,15 +396,19 @@ class DrawingCanvas(QLabel):
     def delete_selected_image(self):
         """Delete the currently selected image"""
         if self.selected_image and self.selected_image in self.images:
+            self._push_undo()
             self.images.remove(self.selected_image)
             self.selected_image = None
             self.update_canvas()
+            self._mark_changed()
             return True
         return False
     
     def bring_to_front(self):
         """Bring selected image to front (top layer)"""
         if self.selected_image and self.selected_image in self.images:
+            self._push_undo()
+            self._mark_changed()
             self.images.remove(self.selected_image)
             self.images.append(self.selected_image)  # Add to end = top layer
             self.update_canvas()
@@ -321,6 +418,8 @@ class DrawingCanvas(QLabel):
     def send_to_back(self):
         """Send selected image to back (bottom layer)"""
         if self.selected_image and self.selected_image in self.images:
+            self._push_undo()
+            self._mark_changed()
             self.images.remove(self.selected_image)
             self.images.insert(0, self.selected_image)  # Add to start = bottom layer
             self.update_canvas()
@@ -332,6 +431,8 @@ class DrawingCanvas(QLabel):
         if self.selected_image and self.selected_image in self.images:
             index = self.images.index(self.selected_image)
             if index < len(self.images) - 1:  # Not already at top
+                self._push_undo()
+                self._mark_changed()
                 self.images[index], self.images[index + 1] = self.images[index + 1], self.images[index]
                 self.update_canvas()
                 return True
@@ -342,6 +443,8 @@ class DrawingCanvas(QLabel):
         if self.selected_image and self.selected_image in self.images:
             index = self.images.index(self.selected_image)
             if index > 0:  # Not already at bottom
+                self._push_undo()
+                self._mark_changed()
                 self.images[index], self.images[index - 1] = self.images[index - 1], self.images[index]
                 self.update_canvas()
                 return True
@@ -364,13 +467,20 @@ class DrawingCanvas(QLabel):
             self.selected_image = None
             self.update_canvas()
     
-    def clear_canvas(self):
-        """Clear everything - images and drawings"""
+    def clear_canvas(self, undoable=False):
+        """Clear everything. Only "Clear All" is undoable; starting a new or
+        opened note also forgets the old drawing's undo history."""
+        if undoable:
+            self._push_undo()
         self.images.clear()
         self.selected_image = None
         self.drawing_layer.fill(Qt.transparent)
         self.update_canvas()
         self.has_drawn = False
+        if undoable:
+            self._mark_changed()
+        else:
+            self.reset_history()
     
     def save_image(self, filepath):
         """Save the entire canvas as an image with transparency preserved"""
@@ -471,6 +581,7 @@ class DrawingPad(QWidget):
         tools_layout.addWidget(eraser_btn)
         
         clear_btn = QPushButton("Clear All")
+        clear_btn.setToolTip("Clear the drawing pad (Ctrl+Z brings it back)")
         clear_btn.clicked.connect(self.clear_all)
         tools_layout.addWidget(clear_btn)
         
@@ -535,7 +646,7 @@ class DrawingPad(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self.canvas.clear_canvas()
+            self.canvas.clear_canvas(undoable=True)
     
     def pick_color(self):
         color = QColorDialog.getColor()
@@ -608,7 +719,17 @@ class DrawingPad(QWidget):
     
     def save_drawing(self, filepath):
         """Save the drawing to a file"""
-        return self.canvas.save_image(filepath)
+        ok = self.canvas.save_image(filepath)
+        if ok:
+            self.canvas.modified = False
+            self.canvas.changed.emit()
+        return ok
+
+    def load_drawing(self, filepath):
+        """Load a drawing saved next to a note"""
+        ok = self.canvas.load_image(filepath)
+        self.canvas.reset_history()
+        return ok
 
 def create_drawing_pad():
     """Factory function to create a drawing pad"""

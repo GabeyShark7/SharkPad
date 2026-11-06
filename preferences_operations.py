@@ -25,6 +25,20 @@ THEMES = {
         "disabled": "#93a1a1", "editor_bg": "#fdf6e3", "editor_fg": "#657b83",
         "dark": False,
     },
+    # Low-glare warm paper, often easier on the eyes for dyslexic readers
+    "Cream": {
+        "window": "#efe6d2", "base": "#fbf3e0", "alt_base": "#f4ead4",
+        "text": "#2b2b2b", "button": "#efe6d2", "highlight": "#b23a2a", "link": "#b23a2a",
+        "disabled": "#8c8273", "editor_bg": "#fbf3e0", "editor_fg": "#1f1f1f",
+        "dark": False,
+    },
+    # Maximum contrast for low vision: white on black with yellow highlights
+    "High Contrast": {
+        "window": "#000000", "base": "#000000", "alt_base": "#1a1a1a",
+        "text": "#ffffff", "button": "#000000", "highlight": "#ffff00", "link": "#00ffff",
+        "disabled": "#bfbfbf", "editor_bg": "#000000", "editor_fg": "#ffffff",
+        "dark": True, "highlighted_text": "#000000",
+    },
 }
 
 
@@ -42,7 +56,7 @@ def _build_palette(t):
     p.setColor(QPalette.ToolTipText, text)
     p.setColor(QPalette.PlaceholderText, QColor(t["disabled"]))
     p.setColor(QPalette.Highlight, QColor(t["highlight"]))
-    p.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    p.setColor(QPalette.HighlightedText, QColor(t.get("highlighted_text", "#ffffff")))
     p.setColor(QPalette.Link, QColor(t["link"]))
     p.setColor(QPalette.BrightText, QColor("#ff5555"))
     for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
@@ -83,7 +97,7 @@ def apply_theme(editor: QPlainTextEdit, theme: str):
 
 
 # Matches a trailing shortcut hint like " (Ctrl+O)" or "\n(Ctrl+Shift+D)"
-_HINT_RE = re.compile(r"\s*\((?:Ctrl|Shift|Alt)\+[^()]*\)\s*$")
+_HINT_RE = re.compile(r"\s*\((?:(?:Ctrl|Shift|Alt)\+[^()]*|F\d{1,2}|Esc)\)\s*$")
 
 
 def set_hinted_text(widget, text, show):
