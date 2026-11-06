@@ -31,6 +31,8 @@ args = [
     "--noconfirm",
     "--clean",
     "--collect-all=faster_whisper",
+    # pyspellchecker loads its word lists from data files at import time
+    "--collect-data=spellchecker",
 ]
 
 if sys.platform == "darwin":
@@ -40,6 +42,15 @@ else:
     args.append("--onefile")
     if sys.platform == "win32":
         args.append("--icon=shark_pad_icon.ico")
+
+if sys.platform.startswith("linux"):
+    # Qt 6.5+ needs libxcb-cursor to open a window on X11, and many distros
+    # don't install it by default, so ship it inside the app
+    import glob
+    libs = glob.glob("/usr/lib/*/libxcb-cursor.so.0")
+    if not libs:
+        sys.exit("libxcb-cursor0 is required to build on Linux (sudo apt install libxcb-cursor0)")
+    args.append(f"--add-binary={libs[0]}{SEP}.")
 
 for f in DATA_FILES:
     args.append(f"--add-data={f}{SEP}.")
