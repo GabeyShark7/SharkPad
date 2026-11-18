@@ -1,9 +1,7 @@
-import re
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication, QPlainTextEdit, QStyleFactory, QWidget
 
-from PySide6.QtGui import QPalette, QColor, QAction
-from PySide6.QtWidgets import QApplication, QPlainTextEdit, QPushButton, QStyleFactory, QWidget
-
-import drawing_operations
+from sharkpad.drawing.canvas import DrawingCanvas
 
 THEMES = {
     "Light": {
@@ -96,41 +94,19 @@ def apply_theme(editor: QPlainTextEdit, theme: str):
     t = THEMES.get(theme, THEMES["Light"])
 
     app = QApplication.instance()
-    if app is not None:
-        app.setStyle(QStyleFactory.create("Fusion"))
-        app.setPalette(_build_palette(t))
-        app.setStyleSheet(scrollbar_style(t))
+    app.setStyle(QStyleFactory.create("Fusion"))
+    app.setPalette(_build_palette(t))
+    app.setStyleSheet(scrollbar_style(t))
 
     editor.setStyleSheet(
         f"QPlainTextEdit {{ background-color: {t['editor_bg']}; color: {t['editor_fg']}; border: none; }}")
 
     window = editor.window()
-    if window is not None:
-        for w in [window] + window.findChildren(QWidget):
-            sheet = w.styleSheet()
-            if sheet:
-                w.setStyleSheet("")
-                w.setStyleSheet(sheet)
+    for w in [window] + window.findChildren(QWidget):
+        sheet = w.styleSheet()
+        if sheet:
+            w.setStyleSheet("")
+            w.setStyleSheet(sheet)
 
-        for canvas in window.findChildren(drawing_operations.DrawingCanvas):
-            canvas.set_dark(t["dark"])
-
-
-_HINT_RE = re.compile(r"\s*\((?:(?:Ctrl|Shift|Alt)\+[^()]*|F\d{1,2}|Esc)\)\s*$")
-
-
-def set_hinted_text(widget, text, show):
-    """Set a button or menu item's text, keeping or hiding its shortcut hint."""
-    widget.setProperty("full_text", text)
-    widget.setText(text if show else _HINT_RE.sub("", text))
-
-
-def apply_shortcut_hints(window, show):
-    """Show or hide the "(Ctrl+...)" hints on every button and menu item."""
-    for w in window.findChildren(QPushButton) + window.findChildren(QAction):
-        full = w.property("full_text")
-        if not full:
-            full = w.text()
-            if not _HINT_RE.search(full):
-                continue
-        set_hinted_text(w, full, show)
+    for canvas in window.findChildren(DrawingCanvas):
+        canvas.set_dark(t["dark"])

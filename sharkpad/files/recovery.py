@@ -2,15 +2,11 @@ import datetime
 import json
 import os
 
-from PySide6.QtCore import QStandardPaths
+from sharkpad.paths import app_data_path
 
 
 def _path():
-    folder = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-    if not folder:
-        folder = os.path.join(os.path.expanduser("~"), ".sharkpad")
-    os.makedirs(folder, exist_ok=True)
-    return os.path.join(folder, "recovery.json")
+    return app_data_path("recovery.json")
 
 
 def save(text, file_path):

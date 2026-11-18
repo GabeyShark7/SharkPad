@@ -1,176 +1,31 @@
 import html
-import os
-import sys
 
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QColor, QTextCharFormat
-from PySide6.QtWidgets import QDialog, QPushButton, QTextBrowser, QVBoxLayout
-
-import edit_operations
-
-READING_RATES = [("Slow", -0.35), ("Normal", 0.0), ("Fast", 0.35)]
-SPOKEN_WORD_COLOR = QColor(100, 181, 246, 160)
-
-
-def no_voice_help():
-    if sys.platform == "win32":
-        return ("Your computer has no text-to-speech voices installed.\n\n"
-                "Open Windows Settings > Time & language > Speech. Under \"Manage voices\", "
-                "click \"Add voices\" and install one (for example English (United States)). "
-                "Then restart SharkPad.")
-    if sys.platform == "darwin":
-        return ("Your Mac didn't offer a text-to-speech voice.\n\n"
-                "Open System Settings > Accessibility > Spoken Content and pick a System Voice, "
-                "then restart SharkPad.")
-    return ("No text-to-speech engine was found.\n\n"
-            "Install one with: sudo apt install speech-dispatcher espeak-ng\n"
-            "Then restart SharkPad.")
-
-
-class ReadAloud(QObject):
-    """Reads the selection (or the text from the cursor's paragraph) out loud."""
-
-    speaking_changed = Signal(bool)
-    error = Signal(str)
-
-    def __init__(self, editor):
-        super().__init__(editor)
-        self.editor = editor
-        self.tts = None
-        self.base = 0
-        self.rate = 0.0
-        self.voice_name = ""
-        self._failed = False
-        editor.textChanged.connect(self._text_changed)
-
-    def _engine(self):
-        """Pick the first working speech engine (loaded on first use, not at startup)."""
-        if self.tts is not None or self._failed:
-            return self.tts
-        from PySide6.QtTextToSpeech import QTextToSpeech
-
-        forced = os.environ.get("SHARKPAD_TTS_ENGINE")
-        engines = [forced] if forced else [e for e in QTextToSpeech.availableEngines() if e != "mock"]
-        for name in engines:
-            tts = QTextToSpeech(name, self)
-            if tts.state() != QTextToSpeech.State.Error:
-                self.tts = tts
-                break
-            tts.deleteLater()
-        if self.tts is None:
-            self._failed = True
-            return None
-
-        self._State = QTextToSpeech.State
-        self.tts.stateChanged.connect(self._state_changed)
-        self.tts.sayingWord.connect(self._saying_word)
-        self.tts.setRate(self.rate)
-        self._apply_voice()
-        return self.tts
-
-    def voices(self):
-        tts = self._engine()
-        return [v.name() for v in tts.availableVoices()] if tts else []
-
-    def set_voice(self, name):
-        self.voice_name = name or ""
-        if self.tts:
-            self._apply_voice()
-
-    def _apply_voice(self):
-        for v in self.tts.availableVoices():
-            if v.name() == self.voice_name:
-                self.tts.setVoice(v)
-                return
-
-    def set_rate(self, rate):
-        self.rate = rate
-        if self.tts:
-            self.tts.setRate(rate)
-
-    def is_speaking(self):
-        return self.tts is not None and self.tts.state() == self._State.Speaking
-
-    def toggle(self):
-        if self.is_speaking():
-            self.stop()
-        else:
-            self.read()
-
-    def read(self):
-        tts = self._engine()
-        if tts is None:
-            self.error.emit(no_voice_help())
-            return
-        if not tts.availableVoices():
-            self.error.emit(no_voice_help())
-            return
-
-        text = self.editor.toPlainText()
-        c = self.editor.textCursor()
-        if c.hasSelection():
-            start, end = c.selectionStart(), c.selectionEnd()
-        elif c.position() >= len(text.rstrip()):
-            start, end = 0, len(text)
-        else:
-            start, end = c.block().position(), len(text)
-
-        chunk = text[start:end]
-        if not chunk.strip():
-            self.error.emit("There's no text to read yet.")
-            return
-        self.base = start
-        tts.say(chunk)
-
-    def stop(self):
-        if self.tts:
-            self.tts.stop()
-        edit_operations.set_selection_layer(self.editor, "speech", [])
-
-    def _text_changed(self):
-        if self.is_speaking():
-            self.stop()
-
-    def _state_changed(self, state):
-        speaking = state == self._State.Speaking
-        if not speaking:
-            edit_operations.set_selection_layer(self.editor, "speech", [])
-        if state == self._State.Error:
-            self.error.emit(f"Read aloud stopped: {self.tts.errorString() or 'speech engine error'}")
-        self.speaking_changed.emit(speaking)
-
-    def _saying_word(self, word, _id, start, length):
-        pos = self.base + start
-        fmt = QTextCharFormat()
-        fmt.setBackground(SPOKEN_WORD_COLOR)
-        cursor = edit_operations.range_cursor(self.editor, pos, pos + length)
-        edit_operations.set_selection_layer(self.editor, "speech", [edit_operations.make_selection(cursor, fmt)])
-
-        rect = self.editor.cursorRect(cursor)
-        view_h = self.editor.viewport().height()
-        if rect.top() < 0 or rect.bottom() > view_h:
-            line_h = max(1, self.editor.fontMetrics().lineSpacing())
-            bar = self.editor.verticalScrollBar()
-            bar.setValue(bar.value() + (rect.top() - view_h // 3) // line_h)
-
-
-class HelpDialog(QDialog):
-    """A readable, scrollable help page (works with screen readers)."""
-
-    def __init__(self, parent, title, body_html):
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.resize(620, 560)
-        layout = QVBoxLayout(self)
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setAccessibleName(title)
-        browser.setHtml(body_html)
-        layout.addWidget(browser)
-        close_btn = QPushButton("Close")
-        close_btn.setDefault(True)
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn, alignment=Qt.AlignRight)
+SHORTCUT_GROUPS = [
+    ("Files", [("Ctrl+N", "New note"), ("Ctrl+O", "Open a note"), ("Ctrl+S", "Save"),
+               ("Ctrl+Shift+S", "Save As"), ("Ctrl+P", "Print"), ("Ctrl+Q", "Exit")]),
+    ("Editing", [("Ctrl+Z", "Undo (text, or drawing when the pad is clicked)"),
+                 ("Ctrl+Y or Ctrl+Shift+Z", "Redo"), ("Ctrl+X / Ctrl+C / Ctrl+V", "Cut / Copy / Paste"),
+                 ("Ctrl+A", "Select all"), ("Ctrl+F", "Find"), ("F3 / Shift+F3", "Next / previous match"),
+                 ("Ctrl+H", "Replace"), ("Ctrl+D", "Duplicate line"), ("Alt+Up / Alt+Down", "Move line up / down"),
+                 ("F5", "Insert date and time")]),
+    ("View", [("Ctrl+= / Ctrl+-", "Bigger / smaller text"), ("Ctrl + mouse wheel", "Bigger / smaller text"),
+              ("Ctrl+0", "Reset text size"), ("F11", "Focus Mode (full screen)")]),
+    ("Accessibility", [("Ctrl+Shift+R", "Read aloud / stop reading"), ("Esc", "Stop reading, close find, or leave Focus Mode")]),
+    ("AI Tools", [("Ctrl+Shift+V", "Voice dictation on / off"), ("Ctrl+Shift+T", "AI Teacher explain (or follow AI-INSTRUCT blocks)"),
+                  ("Ctrl+Shift+I", "Insert an AI instruction block"),
+                  ("Ctrl+Shift+Q", "Ask the AI Teacher about the highlighted text")]),
+    ("Drawing Pad tools", [("Ctrl+Shift+A  or  V", "Select"), ("Ctrl+Shift+D  or  P", "Pen"),
+                           ("Ctrl+Shift+H  or  H", "Highlighter"), ("Ctrl+Shift+E  or  E", "Eraser"),
+                           ("Ctrl+Shift+X  or  T", "Text"), ("Ctrl+Shift+U", "Add an image"),
+                           ("Ctrl+Shift+C", "Pick a color")]),
+    ("Drawing Pad selection (click the pad first)", [
+        ("Drag on empty space", "Select everything inside the box"), ("Shift+click", "Add or remove from selection"),
+        ("Ctrl+A", "Select everything"), ("Arrow keys / Shift+arrows", "Nudge 1 / 10 pixels"),
+        ("Delete or Backspace", "Delete the selection"), ("Ctrl+C / Ctrl+X / Ctrl+V", "Copy / cut / paste"),
+        ("Ctrl+D", "Duplicate"), ("Ctrl+Shift+] / Ctrl+Shift+[", "To front / to back"),
+        ("Ctrl+] / Ctrl+[", "Forward / backward one layer"), ("Double-click text", "Edit the text")]),
+    ("Help", [("F1", "Keyboard shortcuts")]),
+]
 
 
 def shortcuts_html(groups):
@@ -217,6 +72,12 @@ and use the arrow keys to nudge. <b>Delete</b> removes, <b>Ctrl+C</b>/<b>Ctrl+V<
 <ul>
 <li><b>Ctrl+Shift+T</b> asks the AI Teacher to explain your notes (or just the part you selected).</li>
 <li>Changed your mind? <b>Ctrl+Z</b> or <b>Restore original text</b> brings your notes back.</li>
+<li>Want something specific? Put <b>AI-INSTRUCT{$your instruction$};</b> above the part you want changed and
+<b>AI-INSTRUCT{END};</b> after it (or press <b>Ctrl+Shift+I</b>). The block glows red. Press <b>Ctrl+Shift+T</b> and the
+AI Teacher rewrites just that part the way you asked.</li>
+<li>Got a question? Highlight some notes, right-click and pick <b>Ask a Question</b> (or press <b>Ctrl+Shift+Q</b>).
+The question and answer show up below that part, glowing blue.</li>
+<li>In <b>AI Tools &gt; AI Teacher Settings</b>, the <b>Teacher Preset</b> box tells the AI Teacher how to act every time.</li>
 <li><b>Ctrl+Shift+R</b> reads your notes out loud and highlights each word as it's spoken.</li>
 </ul>
 <h3>Never lose work</h3>
@@ -279,10 +140,8 @@ fewest mistakes but needs a quick computer. Each model downloads once the first 
 <p>Speech recognition runs on your own computer. Your voice is never uploaded.</p>
 """
 
-
-def about_html(version=""):
-    return f"""
-<h2>SharkPad {html.escape(version)}</h2>
+ABOUT_HTML = """
+<h2>SharkPad</h2>
 <p>Notes, drawing, and voice dictation in one window. Built for students who need to type,
 sketch, and listen at the same time.</p>
 <p>Speech recognition by Whisper (runs offline). AI Teacher by Groq.

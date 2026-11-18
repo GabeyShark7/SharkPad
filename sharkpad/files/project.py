@@ -18,6 +18,17 @@ def image_extensions():
     return [e for e in _IMAGE_CANDIDATES if e[1:] in writable]
 
 
+def chosen_notes_ext(settings):
+    ext = settings.value("notes_ext", ".txt")
+    return ext if ext in NOTE_EXTENSIONS else ".txt"
+
+
+def chosen_image_ext(settings):
+    allowed = image_extensions()
+    ext = settings.value("image_ext", ".png")
+    return ext if ext in allowed else (allowed[0] if allowed else ".png")
+
+
 def clean_name(raw):
     name = os.path.basename(raw.strip())
     stem, ext = os.path.splitext(name)
@@ -122,9 +133,9 @@ def read_notes(path):
     return raw
 
 
-def write_image(drawing_pad, path):
+def write_image(canvas, path):
     tmp = _temp_path(path)
-    if not drawing_pad.save_drawing(tmp):
+    if not canvas.save(tmp):
         if os.path.exists(tmp):
             os.remove(tmp)
         raise OSError(f"Couldn't write the drawing as {os.path.splitext(path)[1]}")
